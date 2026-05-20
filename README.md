@@ -6,9 +6,9 @@
 - **主な機能**: 見積データのCRUD・集計ダッシュボード・グラフ表示・絞り込み・CSV/PDF出力・権限管理
 
 ## URL
+- **🚀 本番URL (Cloudflare Pages)**: https://murata-tekkin-estimate.pages.dev
+- **最新デプロイ**: https://bdd48f55.murata-tekkin-estimate.pages.dev
 - **ローカル開発**: http://localhost:3000
-- **公開URL (sandbox)**: 起動中サンドボックスのGetServiceUrlで取得
-- **本番URL (Cloudflare Pages)**: デプロイ後に追記
 
 ## テストアカウント
 | ロール   | ユーザー名 | パスワード  | 権限                                       |
