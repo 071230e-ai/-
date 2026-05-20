@@ -1,0 +1,157 @@
+/* 村田鉄筋㈱ 見積データベース 共通スタイル */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+}
+
+/* テーブル */
+.data-table {
+  border-collapse: collapse;
+  width: 100%;
+  background: white;
+}
+.data-table th {
+  background: #1e3a8a; /* navy */
+  color: white;
+  padding: 8px 10px;
+  font-weight: 600;
+  font-size: 13px;
+  text-align: left;
+  border: 1px solid #1e3a8a;
+  white-space: nowrap;
+}
+.data-table td {
+  border: 1px solid #e5e7eb;
+  padding: 8px 10px;
+  font-size: 13px;
+  vertical-align: top;
+}
+.data-table tr:nth-child(even) td {
+  background: #f9fafb;
+}
+.data-table tr:hover td {
+  background: #eff6ff;
+}
+
+/* バッジ */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.badge-won { background: #d1fae5; color: #065f46; border: 1px solid #10b981; }
+.badge-lost { background: #fee2e2; color: #991b1b; border: 1px solid #ef4444; }
+.badge-pending { background: #fef3c7; color: #92400e; border: 1px solid #f59e0b; }
+
+/* ボタン */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 500;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+  border: 1px solid transparent;
+}
+.btn-primary { background: #1e3a8a; color: white; }
+.btn-primary:hover { background: #1e40af; }
+.btn-secondary { background: white; color: #374151; border-color: #d1d5db; }
+.btn-secondary:hover { background: #f3f4f6; }
+.btn-success { background: #10b981; color: white; }
+.btn-success:hover { background: #059669; }
+.btn-danger { background: #ef4444; color: white; }
+.btn-danger:hover { background: #dc2626; }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+
+/* フォーム */
+.form-label {
+  display: block;
+  font-weight: 600;
+  font-size: 13px;
+  color: #374151;
+  margin-bottom: 4px;
+}
+.form-input, .form-select, .form-textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  background: white;
+}
+.form-input:focus, .form-select:focus, .form-textarea:focus {
+  outline: none;
+  border-color: #1e3a8a;
+  box-shadow: 0 0 0 3px rgba(30, 58, 138, 0.1);
+}
+
+/* カード */
+.stat-card {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px;
+}
+.stat-card .label {
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+.stat-card .value {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1e3a8a;
+}
+
+/* ナビゲーション */
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  color: #d1d5db;
+  text-decoration: none;
+  border-left: 3px solid transparent;
+  font-size: 14px;
+  cursor: pointer;
+}
+.sidebar-link:hover {
+  background: #1e293b;
+  color: white;
+}
+.sidebar-link.active {
+  background: #1e293b;
+  color: white;
+  border-left-color: #3b82f6;
+}
+
+/* PDF印刷用 */
+@media print {
+  .no-print { display: none !important; }
+  .print-page-break { page-break-after: always; }
+  body { background: white !important; }
+}
+
+/* レスポンシブ */
+@media (max-width: 768px) {
+  .data-table { font-size: 12px; }
+  .data-table th, .data-table td { padding: 6px 8px; }
+  .table-scroll { overflow-x: auto; }
+}
+
+/* スクロール時のスティッキーヘッダー */
+.table-sticky thead th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+/* 数値表示 */
+.num-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
