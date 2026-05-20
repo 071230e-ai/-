@@ -150,6 +150,50 @@ body {
   z-index: 10;
 }
 
+/* Chart.js 描画コンテナ
+   - 親要素に固定の高さを持たせることで maintainAspectRatio:false 時の描画を安定化
+   - canvas は absolute で親に張り付くようにしてレイアウト確定までの高さ0問題を回避 */
+.chart-container {
+  position: relative;
+  width: 100%;
+  height: 280px;
+  min-height: 280px;
+}
+.chart-container.chart-container-sm {
+  height: 220px;
+  min-height: 220px;
+}
+.chart-container.chart-container-lg {
+  height: 340px;
+  min-height: 340px;
+}
+.chart-container canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+
+/* グラフのデータなし表示 */
+.chart-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+  font-size: 13px;
+  background: #f9fafb;
+  border: 1px dashed #e5e7eb;
+  border-radius: 6px;
+}
+.chart-empty i { font-size: 28px; margin-bottom: 8px; color: #d1d5db; }
+
+@media (max-width: 768px) {
+  .chart-container { height: 240px; min-height: 240px; }
+  .chart-container.chart-container-lg { height: 280px; min-height: 280px; }
+}
+
 /* 数値表示 */
 .num-cell {
   text-align: right;

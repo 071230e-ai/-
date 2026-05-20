@@ -384,20 +384,28 @@ async function loadAndRenderDashboard() {
       <!-- グラフ -->
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
         <div class="bg-white border rounded-lg p-4">
-          <div class="font-semibold text-gray-700 mb-2"><i class="fas fa-chart-bar"></i> 月別見積件数</div>
-          <canvas id="chart-monthly" height="200"></canvas>
+          <div class="font-semibold text-gray-700 mb-3"><i class="fas fa-chart-bar"></i> 月別見積件数 (見積/受注/失注)</div>
+          <div class="chart-container"><canvas id="chart-monthly"></canvas></div>
         </div>
         <div class="bg-white border rounded-lg p-4">
-          <div class="font-semibold text-gray-700 mb-2"><i class="fas fa-chart-pie"></i> 失注理由別</div>
-          <canvas id="chart-lost" height="200"></canvas>
+          <div class="font-semibold text-gray-700 mb-3"><i class="fas fa-chart-pie"></i> 失注理由別</div>
+          <div class="chart-container"><canvas id="chart-lost"></canvas></div>
         </div>
         <div class="bg-white border rounded-lg p-4">
-          <div class="font-semibold text-gray-700 mb-2"><i class="fas fa-chart-bar"></i> 構造別見積件数</div>
-          <canvas id="chart-structure" height="200"></canvas>
+          <div class="font-semibold text-gray-700 mb-3"><i class="fas fa-chart-bar"></i> 構造別見積件数</div>
+          <div class="chart-container"><canvas id="chart-structure"></canvas></div>
         </div>
         <div class="bg-white border rounded-lg p-4">
-          <div class="font-semibold text-gray-700 mb-2"><i class="fas fa-chart-line"></i> 単価帯別 受注率</div>
-          <canvas id="chart-price" height="200"></canvas>
+          <div class="font-semibold text-gray-700 mb-3"><i class="fas fa-chart-line"></i> 単価帯別 受注率</div>
+          <div class="chart-container"><canvas id="chart-price"></canvas></div>
+        </div>
+        <div class="bg-white border rounded-lg p-4">
+          <div class="font-semibold text-gray-700 mb-3"><i class="fas fa-yen-sign"></i> 月別 見積金額・受注金額</div>
+          <div class="chart-container"><canvas id="chart-monthly-amount"></canvas></div>
+        </div>
+        <div class="bg-white border rounded-lg p-4">
+          <div class="font-semibold text-gray-700 mb-3"><i class="fas fa-handshake"></i> 元請け別 受注率 (TOP10)</div>
+          <div class="chart-container chart-container-lg"><canvas id="chart-client-rate-dash"></canvas></div>
         </div>
       </div>
 
@@ -435,15 +443,109 @@ async function loadAndRenderDashboard() {
   }
 }
 
+// ========== Chart.js 安全描画ヘルパー ==========
+const DEV = ['localhost', '127.0.0.1', 'sandbox.novita.ai', '.pages.dev'].some(h => location.hostname.includes(h));
+function dlog(...args) { if (DEV) console.log('[chart]', ...args); }
+
 function destroyChart(id) {
-  if (State.charts[id]) { State.charts[id].destroy(); delete State.charts[id]; }
+  if (State.charts[id]) {
+    try { State.charts[id].destroy(); } catch (e) { console.warn('chart destroy fail', id, e); }
+    delete State.charts[id];
+  }
+}
+
+// 数値変換: null/undefined/空文字/文字列を全て安全にNumberに
+function toNum(v) {
+  if (v === null || v === undefined || v === '') return 0;
+  const n = Number(v);
+  return isNaN(n) ? 0 : n;
+}
+
+// グラフカード内の "データなし" 表示制御
+function setChartEmpty(canvasId, isEmpty, msg) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const container = canvas.parentElement;
+  if (!container) return;
+  // 既存の empty 表示を除去
+  const old = container.querySelector('.chart-empty');
+  if (old) old.remove();
+  if (isEmpty) {
+    canvas.style.display = 'none';
+    const div = document.createElement('div');
+    div.className = 'chart-empty';
+    div.innerHTML = `<i class="fas fa-chart-bar"></i><div>${msg || '表示できるデータがありません'}</div>`;
+    container.appendChild(div);
+  } else {
+    canvas.style.display = '';
+  }
+}
+
+/**
+ * 安全にChart.jsを描画する共通関数
+ * @param {string} canvasId - canvas要素のID
+ * @param {string} key - State.chartsキー (destroy用)
+ * @param {object} config - Chart.js設定オブジェクト
+ * @param {string} emptyMsg - データなし時のメッセージ
+ */
+function safeDrawChart(canvasId, key, config, emptyMsg) {
+  destroyChart(key);
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) {
+    console.warn(`[chart] canvas not found: #${canvasId}`);
+    return null;
+  }
+
+  // データ存在チェック (datasets の data 合計が0なら "データなし" 扱い)
+  const datasets = config?.data?.datasets || [];
+  const totalDataPoints = datasets.reduce((s, ds) => s + (Array.isArray(ds.data) ? ds.data.length : 0), 0);
+  const totalSum = datasets.reduce((s, ds) => {
+    if (!Array.isArray(ds.data)) return s;
+    return s + ds.data.reduce((a, b) => a + toNum(b), 0);
+  }, 0);
+
+  // ラベルが空 or 全データの合計が0 ならデータなし表示
+  const labels = config?.data?.labels || [];
+  if (!labels.length || totalDataPoints === 0 || totalSum === 0) {
+    setChartEmpty(canvasId, true, emptyMsg);
+    return null;
+  }
+  setChartEmpty(canvasId, false);
+
+  // 必ず responsive + maintainAspectRatio:false (親の高さに従う)
+  config.options = config.options || {};
+  config.options.responsive = true;
+  config.options.maintainAspectRatio = false;
+
+  // 数値変換 (datasetsの中の data を全てNumberに)
+  config.data.datasets = config.data.datasets.map(ds => ({
+    ...ds,
+    data: Array.isArray(ds.data) ? ds.data.map(toNum) : ds.data,
+  }));
+
+  try {
+    State.charts[key] = new Chart(canvas, config);
+    dlog(`drew #${canvasId}`, { labels: labels.length, sum: totalSum });
+    return State.charts[key];
+  } catch (err) {
+    console.error(`[chart] failed to draw #${canvasId}:`, err);
+    setChartEmpty(canvasId, true, 'グラフ描画エラー: ' + (err.message || '不明'));
+    return null;
+  }
 }
 
 function drawDashboardCharts(data) {
-  // 月別
-  destroyChart('monthly');
+  dlog('stats api response:', data);
   const m = data.by_month || [];
-  State.charts.monthly = new Chart(document.getElementById('chart-monthly'), {
+  const l = data.by_lost_reason || [];
+  const s = data.by_structure || [];
+  const p = data.by_price || [];
+  const c = data.by_client || [];
+  dlog('lost reason stats:', l);
+  dlog('month stats:', m);
+
+  // ----- 月別見積件数 -----
+  safeDrawChart('chart-monthly', 'monthly', {
     type: 'bar',
     data: {
       labels: m.map(x => x.month),
@@ -451,46 +553,77 @@ function drawDashboardCharts(data) {
         { label: '見積', data: m.map(x => x.total_count), backgroundColor: '#3b82f6' },
         { label: '受注', data: m.map(x => x.won_count), backgroundColor: '#10b981' },
         { label: '失注', data: m.map(x => x.lost_count), backgroundColor: '#ef4444' },
-      ]
+      ],
     },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
-  });
+    options: { plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
+  }, '月別データがありません');
 
-  // 失注理由
-  destroyChart('lost');
-  const l = data.by_lost_reason || [];
-  State.charts.lost = new Chart(document.getElementById('chart-lost'), {
+  // ----- 失注理由別ドーナツ -----
+  safeDrawChart('chart-lost', 'lost', {
     type: 'doughnut',
     data: {
-      labels: l.map(x => x.lost_reason),
-      datasets: [{ data: l.map(x => x.count), backgroundColor: ['#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16', '#6b7280'] }]
+      labels: l.map(x => x.lost_reason || '不明'),
+      datasets: [{
+        data: l.map(x => x.count),
+        backgroundColor: ['#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16', '#6b7280'],
+        borderWidth: 2,
+        borderColor: '#fff',
+      }],
     },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
-  });
+    options: { plugins: { legend: { position: 'bottom' } } },
+  }, '失注データがありません');
 
-  // 構造別
-  destroyChart('structure');
-  const s = data.by_structure || [];
-  State.charts.structure = new Chart(document.getElementById('chart-structure'), {
+  // ----- 構造別見積件数 -----
+  safeDrawChart('chart-structure', 'structure', {
     type: 'bar',
     data: {
-      labels: s.map(x => x.structure),
-      datasets: [{ label: '見積件数', data: s.map(x => x.total_count), backgroundColor: '#1e3a8a' }]
+      labels: s.map(x => x.structure || '(未設定)'),
+      datasets: [{ label: '見積件数', data: s.map(x => x.total_count), backgroundColor: '#1e3a8a' }],
     },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
-  });
+    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
+  }, '構造別データがありません');
 
-  // 単価帯別受注率
-  destroyChart('price');
-  const p = data.by_price || [];
-  State.charts.price = new Chart(document.getElementById('chart-price'), {
+  // ----- 単価帯別 受注率 -----
+  safeDrawChart('chart-price', 'price', {
     type: 'bar',
     data: {
       labels: p.map(x => x.price_range),
-      datasets: [{ label: '受注率(%)', data: p.map(x => calcOrderRate(x.won_count, x.lost_count).toFixed(1)), backgroundColor: '#10b981' }]
+      datasets: [{
+        label: '受注率(%)',
+        data: p.map(x => calcOrderRate(x.won_count, x.lost_count)),
+        backgroundColor: '#10b981',
+      }],
     },
-    options: { responsive: true, maintainAspectRatio: false, scales: { y: { max: 100 } }, plugins: { legend: { display: false } } }
-  });
+    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } } } },
+  }, '単価別データがありません');
+
+  // ----- 月別 見積金額・受注金額 (要望項目) -----
+  safeDrawChart('chart-monthly-amount', 'monthly-amount', {
+    type: 'bar',
+    data: {
+      labels: m.map(x => x.month),
+      datasets: [
+        { label: '見積金額(月別合計)', data: m.map(x => x.total_amount), backgroundColor: '#3b82f6' },
+        { label: '受注金額(月別合計)', data: m.map(x => x.won_amount), backgroundColor: '#10b981' },
+      ],
+    },
+    options: { plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true, ticks: { callback: v => '¥' + (v / 10000).toFixed(0) + '万' } } } },
+  }, '月別金額データがありません');
+
+  // ----- 元請け別 受注率 (TOP10) -----
+  const cTop = c.slice(0, 10);
+  safeDrawChart('chart-client-rate-dash', 'client-rate-dash', {
+    type: 'bar',
+    data: {
+      labels: cTop.map(x => x.client_name),
+      datasets: [{
+        label: '受注率(%)',
+        data: cTop.map(x => calcOrderRate(x.won_count, x.lost_count)),
+        backgroundColor: '#10b981',
+      }],
+    },
+    options: { indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } } } },
+  }, '元請けデータがありません');
 }
 
 // ========== 見積一覧 ==========
@@ -821,11 +954,11 @@ function renderStatsTable(type, data) {
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         <div class="bg-white border rounded-lg p-4">
           <div class="font-semibold mb-2"><i class="fas fa-chart-bar"></i> 元請け別 受注率</div>
-          <canvas id="chart-client-rate" height="200"></canvas>
+          <div class="chart-container chart-container-lg"><canvas id="chart-client-rate"></canvas></div>
         </div>
         <div class="bg-white border rounded-lg p-4">
           <div class="font-semibold mb-2"><i class="fas fa-chart-bar"></i> 元請け別 見積金額</div>
-          <canvas id="chart-client-amount" height="200"></canvas>
+          <div class="chart-container chart-container-lg"><canvas id="chart-client-amount"></canvas></div>
         </div>
       </div>
       <div class="bg-white border rounded-lg overflow-hidden">
@@ -858,17 +991,16 @@ function renderStatsTable(type, data) {
         </div>
       </div>
     `;
-    destroyChart('client-rate');
-    State.charts['client-rate'] = new Chart(document.getElementById('chart-client-rate'), {
+    dlog('client stats rows:', rows);
+    safeDrawChart('chart-client-rate', 'client-rate', {
       type: 'bar',
       data: {
         labels: rows.map(r => r.client_name),
         datasets: [{ label: '受注率(%)', data: rows.map(r => calcOrderRate(r.won_count, r.lost_count).toFixed(1)), backgroundColor: '#10b981' }]
       },
-      options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, scales: { x: { max: 100 } } }
-    });
-    destroyChart('client-amount');
-    State.charts['client-amount'] = new Chart(document.getElementById('chart-client-amount'), {
+      options: { indexAxis: 'y', scales: { x: { max: 100 } } }
+    }, '表示できる元請けデータがありません');
+    safeDrawChart('chart-client-amount', 'client-amount', {
       type: 'bar',
       data: {
         labels: rows.map(r => r.client_name),
@@ -877,15 +1009,15 @@ function renderStatsTable(type, data) {
           { label: '受注金額', data: rows.map(r => r.won_amount), backgroundColor: '#10b981' },
         ]
       },
-      options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false }
-    });
+      options: { indexAxis: 'y' }
+    }, '表示できる元請けデータがありません');
 
   } else if (type === 'structure') {
     const rows = data.by_structure || [];
     content.innerHTML = `
       <div class="bg-white border rounded-lg p-4 mb-4">
         <div class="font-semibold mb-2"><i class="fas fa-chart-bar"></i> 構造別 件数と受注率</div>
-        <canvas id="chart-struct" height="180"></canvas>
+        <div class="chart-container chart-container-lg"><canvas id="chart-struct"></canvas></div>
       </div>
       <div class="bg-white border rounded-lg overflow-hidden">
         <div class="table-scroll">
@@ -910,8 +1042,8 @@ function renderStatsTable(type, data) {
         </div>
       </div>
     `;
-    destroyChart('struct');
-    State.charts['struct'] = new Chart(document.getElementById('chart-struct'), {
+    dlog('structure stats rows:', rows);
+    safeDrawChart('chart-struct', 'struct', {
       type: 'bar',
       data: {
         labels: rows.map(r => r.structure),
@@ -920,15 +1052,15 @@ function renderStatsTable(type, data) {
           { label: '受注率(%)', data: rows.map(r => calcOrderRate(r.won_count, r.lost_count).toFixed(1)), backgroundColor: '#10b981', type: 'line', yAxisID: 'y1', borderColor: '#10b981' },
         ]
       },
-      options: { responsive: true, maintainAspectRatio: false, scales: { y: { position: 'left' }, y1: { position: 'right', max: 100, grid: { drawOnChartArea: false } } } }
-    });
+      options: { scales: { y: { position: 'left' }, y1: { position: 'right', max: 100, grid: { drawOnChartArea: false } } } }
+    }, '表示できる構造別データがありません');
 
   } else if (type === 'price') {
     const rows = data.by_price || [];
     content.innerHTML = `
       <div class="bg-white border rounded-lg p-4 mb-4">
         <div class="font-semibold mb-2"><i class="fas fa-chart-bar"></i> 単価帯別 受注率</div>
-        <canvas id="chart-price-rate" height="180"></canvas>
+        <div class="chart-container chart-container-lg"><canvas id="chart-price-rate"></canvas></div>
       </div>
       <div class="bg-white border rounded-lg overflow-hidden">
         <div class="table-scroll">
@@ -952,8 +1084,8 @@ function renderStatsTable(type, data) {
         </div>
       </div>
     `;
-    destroyChart('price-rate');
-    State.charts['price-rate'] = new Chart(document.getElementById('chart-price-rate'), {
+    dlog('price stats rows:', rows);
+    safeDrawChart('chart-price-rate', 'price-rate', {
       type: 'bar',
       data: {
         labels: rows.map(r => r.price_range),
@@ -963,8 +1095,8 @@ function renderStatsTable(type, data) {
           { label: '失注', data: rows.map(r => r.lost_count), backgroundColor: '#ef4444' },
         ]
       },
-      options: { responsive: true, maintainAspectRatio: false }
-    });
+      options: {}
+    }, '表示できる単価帯データがありません');
 
   } else if (type === 'lost') {
     const rows = data.by_lost_reason || [];
@@ -972,11 +1104,11 @@ function renderStatsTable(type, data) {
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         <div class="bg-white border rounded-lg p-4">
           <div class="font-semibold mb-2"><i class="fas fa-chart-pie"></i> 失注理由別 円グラフ</div>
-          <canvas id="chart-lost-pie" height="200"></canvas>
+          <div class="chart-container"><canvas id="chart-lost-pie"></canvas></div>
         </div>
         <div class="bg-white border rounded-lg p-4">
           <div class="font-semibold mb-2"><i class="fas fa-chart-bar"></i> 失注理由別 件数</div>
-          <canvas id="chart-lost-bar" height="200"></canvas>
+          <div class="chart-container"><canvas id="chart-lost-bar"></canvas></div>
         </div>
       </div>
       <div class="bg-white border rounded-lg overflow-hidden">
@@ -985,12 +1117,12 @@ function renderStatsTable(type, data) {
             <thead><tr><th>失注理由</th><th class="num-cell">件数</th><th class="num-cell">割合</th></tr></thead>
             <tbody>
               ${(() => {
-                const total = rows.reduce((s, r) => s + r.count, 0);
+                const total = rows.reduce((s, r) => s + toNum(r.count), 0);
                 return rows.map(r => `<tr>
                   <td>${escapeHtml(r.lost_reason)}</td>
                   <td class="num-cell font-bold">${r.count}</td>
-                  <td class="num-cell">${total > 0 ? ((r.count / total) * 100).toFixed(1) : 0}%</td>
-                </tr>`).join('') || '<tr><td colspan="3" class="text-center text-gray-400">データなし</td></tr>';
+                  <td class="num-cell">${total > 0 ? ((toNum(r.count) / total) * 100).toFixed(1) : 0}%</td>
+                </tr>`).join('') || '<tr><td colspan="3" class="text-center text-gray-400">失注データがありません</td></tr>';
               })()}
             </tbody>
           </table>
@@ -998,18 +1130,17 @@ function renderStatsTable(type, data) {
       </div>
     `;
     const colors = ['#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16', '#6b7280'];
-    destroyChart('lost-pie');
-    State.charts['lost-pie'] = new Chart(document.getElementById('chart-lost-pie'), {
-      type: 'pie',
+    dlog('lost reason rows:', rows);
+    safeDrawChart('chart-lost-pie', 'lost-pie', {
+      type: 'doughnut',
       data: { labels: rows.map(r => r.lost_reason), datasets: [{ data: rows.map(r => r.count), backgroundColor: colors }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
-    });
-    destroyChart('lost-bar');
-    State.charts['lost-bar'] = new Chart(document.getElementById('chart-lost-bar'), {
+      options: { plugins: { legend: { position: 'bottom' } } }
+    }, '失注データがありません');
+    safeDrawChart('chart-lost-bar', 'lost-bar', {
       type: 'bar',
       data: { labels: rows.map(r => r.lost_reason), datasets: [{ label: '件数', data: rows.map(r => r.count), backgroundColor: colors }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
-    });
+      options: { plugins: { legend: { display: false } } }
+    }, '失注データがありません');
   }
 }
 

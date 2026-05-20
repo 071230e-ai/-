@@ -396,24 +396,26 @@ app.get('/api/stats', authMiddleware, async (c) => {
     ORDER BY MIN(unit_price)
   `).bind(...params).all()
 
-  // 失注理由別
+  // 失注理由別 (NULL も空文字も "不明" として扱う)
   const { results: byLostReason } = await c.env.DB.prepare(`
     SELECT
-      COALESCE(lost_reason, '不明') AS lost_reason,
+      COALESCE(NULLIF(TRIM(lost_reason), ''), '不明') AS lost_reason,
       COUNT(*) AS count
     FROM estimates ${where ? where + ' AND ' : 'WHERE '} result='失注'
-    GROUP BY lost_reason
+    GROUP BY COALESCE(NULLIF(TRIM(lost_reason), ''), '不明')
     ORDER BY count DESC
   `).bind(...params).all()
 
-  // 月別集計 (年月をキーに)
+  // 月別集計 (年月をキーに) + 金額も同時取得
   const { results: byMonth } = await c.env.DB.prepare(`
     SELECT
       substr(estimate_date, 1, 7) AS month,
       COUNT(*) AS total_count,
       SUM(CASE WHEN result='受注' THEN 1 ELSE 0 END) AS won_count,
       SUM(CASE WHEN result='失注' THEN 1 ELSE 0 END) AS lost_count,
-      SUM(CASE WHEN result='未定' THEN 1 ELSE 0 END) AS pending_count
+      SUM(CASE WHEN result='未定' THEN 1 ELSE 0 END) AS pending_count,
+      COALESCE(SUM(estimate_amount), 0) AS total_amount,
+      COALESCE(SUM(CASE WHEN result='受注' THEN estimate_amount ELSE 0 END), 0) AS won_amount
     FROM estimates ${where}
     GROUP BY month
     ORDER BY month
