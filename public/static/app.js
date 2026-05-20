@@ -212,14 +212,28 @@ function renderLogin(app) {
     const password = fd.get('password');
     const errorEl = document.getElementById('login-error');
     errorEl.classList.add('hidden');
+    errorEl.innerHTML = '';
     try {
+      // 同一オリジンの /api/login にPOST (相対パスなのでプレビュー/本番どちらでも自動的に同じドメインを使用)
       const { data } = await API.post('/api/login', { username, password });
       State.token = data.token;
       State.user = data.user;
       localStorage.setItem('murata_token', data.token);
+      console.log('[LOGIN] success:', data.user);
       navigate('/dashboard');
     } catch (err) {
-      errorEl.textContent = err.response?.data?.error || 'ログインに失敗しました';
+      // 詳細エラーをコンソールに出力 (開発者向け)
+      console.error('[LOGIN] failed:', err);
+      const resp = err.response;
+      let msg = '';
+      if (!resp) {
+        msg = `ログインAPIに接続できません: ${err.message || '原因不明'}`;
+      } else {
+        msg = resp.data?.error || `HTTP ${resp.status} エラー`;
+        if (resp.data?.hint) msg += `<br><span class="text-xs text-gray-500">ヒント: ${escapeHtml(resp.data.hint)}</span>`;
+        if (resp.data?.detail) console.error('[LOGIN] detail:', resp.data.detail);
+      }
+      errorEl.innerHTML = msg;
       errorEl.classList.remove('hidden');
     }
   });

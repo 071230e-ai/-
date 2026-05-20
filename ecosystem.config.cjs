@@ -3,7 +3,10 @@ module.exports = {
     {
       name: 'webapp',
       script: 'npx',
-      args: 'wrangler pages dev dist --d1=webapp-production --local --ip 0.0.0.0 --port 3000',
+      // D1バインディングは wrangler.jsonc から読み込まれるため --d1 は指定しない
+      // (CLIの --d1 を指定すると wrangler.jsonc の database_name を上書きしてしまい、
+      //  ローカルDBが分裂してテーブル無しの空DBを参照する問題が起きるため)
+      args: 'wrangler pages dev dist --local --ip 0.0.0.0 --port 3000',
       cwd: '/home/user/webapp',
       env: {
         NODE_ENV: 'development',

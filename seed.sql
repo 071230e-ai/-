@@ -1,9 +1,13 @@
 -- 初期ユーザー (パスワードはSHA-256ハッシュ)
--- admin / admin123
--- user / user123
+-- admin / admin123 -> SHA256: 240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9
+-- user  / user123  -> SHA256: e606e38b0d8c19b24cf0ee3808183162ea7cd63ff7912dbb22b5e803286b4446
 INSERT OR IGNORE INTO users (username, password_hash, display_name, role) VALUES
   ('admin', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', '管理者', 'admin'),
-  ('user', 'ee11cbb19052e40b07aac0ca060c23ee3eb6e7c2fee0a76d6f5b5e6f6cdb88f5', '一般ユーザー', 'user');
+  ('user', 'e606e38b0d8c19b24cf0ee3808183162ea7cd63ff7912dbb22b5e803286b4446', '一般ユーザー', 'user');
+
+-- 既存ユーザーのハッシュも上書き修正 (誤った値が入っている場合に備えて)
+UPDATE users SET password_hash = '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9' WHERE username = 'admin';
+UPDATE users SET password_hash = 'e606e38b0d8c19b24cf0ee3808183162ea7cd63ff7912dbb22b5e803286b4446' WHERE username = 'user';
 
 -- サンプル見積データ
 INSERT OR IGNORE INTO estimates (

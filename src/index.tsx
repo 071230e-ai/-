@@ -75,16 +75,57 @@ async function adminMiddleware(c: any, next: any) {
 
 // ====== 認証API ======
 app.post('/api/login', async (c) => {
-  const { username, password } = await c.req.json()
-  if (!username || !password) return c.json({ error: 'ユーザー名とパスワードを入力してください' }, 400)
+  let body: any
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: 'リクエスト形式が不正です (JSONとして読み取れません)' }, 400)
+  }
+  const { username, password } = body
+  if (!username || !password) {
+    return c.json({ error: 'ユーザー名とパスワードを入力してください' }, 400)
+  }
 
-  const passwordHash = await sha256(password)
-  const result = await c.env.DB.prepare(
-    'SELECT id, username, password_hash, display_name, role FROM users WHERE username = ?'
-  ).bind(username).first<any>()
+  // D1接続チェック
+  if (!c.env.DB) {
+    return c.json({
+      error: 'データベースに接続できません (D1バインディング DB が見つかりません)',
+      hint: 'wrangler.jsonc の d1_databases 設定を確認してください',
+    }, 500)
+  }
 
-  if (!result || result.password_hash !== passwordHash) {
-    return c.json({ error: 'ユーザー名またはパスワードが違います' }, 401)
+  // usersテーブルの存在確認 + ユーザー取得
+  let result: any = null
+  try {
+    result = await c.env.DB.prepare(
+      'SELECT id, username, password_hash, display_name, role FROM users WHERE username = ?'
+    ).bind(username).first<any>()
+  } catch (err: any) {
+    const msg = err?.message || String(err)
+    if (msg.includes('no such table')) {
+      return c.json({
+        error: 'usersテーブルが存在しません',
+        hint: 'マイグレーション (wrangler d1 migrations apply) と seed の適用が必要です',
+        detail: msg,
+      }, 500)
+    }
+    return c.json({ error: 'データベースエラー', detail: msg }, 500)
+  }
+
+  if (!result) {
+    return c.json({
+      error: 'ユーザー名またはパスワードが違います',
+      hint: `username='${username}' に該当するユーザーが見つかりません`,
+    }, 401)
+  }
+
+  // 余分な空白や大文字小文字を考慮しつつハッシュ比較
+  const passwordHash = await sha256(String(password))
+  if (result.password_hash !== passwordHash) {
+    return c.json({
+      error: 'ユーザー名またはパスワードが違います',
+      hint: 'パスワードのハッシュが一致しません',
+    }, 401)
   }
 
   const userInfo = {
@@ -95,6 +136,31 @@ app.post('/api/login', async (c) => {
   }
   const token = await makeSessionToken(userInfo)
   return c.json({ token, user: userInfo })
+})
+
+// ====== ヘルスチェックAPI (デバッグ用) ======
+app.get('/api/health', async (c) => {
+  const health: any = {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    db: { bound: !!c.env.DB, accessible: false, tables: [], users_count: null },
+  }
+  if (c.env.DB) {
+    try {
+      const { results } = await c.env.DB.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+      ).all()
+      health.db.accessible = true
+      health.db.tables = (results || []).map((r: any) => r.name)
+      try {
+        const u = await c.env.DB.prepare('SELECT COUNT(*) AS c FROM users').first<any>()
+        health.db.users_count = u?.c ?? 0
+      } catch {}
+    } catch (err: any) {
+      health.db.error = err?.message || String(err)
+    }
+  }
+  return c.json(health)
 })
 
 app.get('/api/me', authMiddleware, async (c) => {
