@@ -325,6 +325,16 @@ app.get('/api/stats', authMiddleware, async (c) => {
   if (q.building_use) { conditions.push('building_use = ?'); params.push(q.building_use) }
   if (q.material_type) { conditions.push('material_type = ?'); params.push(q.material_type) }
   if (q.estimator) { conditions.push('estimator = ?'); params.push(q.estimator) }
+  // ===== 集計カード未連動の修正: result / lost_reason / price_min / price_max / search を追加 =====
+  if (q.result) { conditions.push('result = ?'); params.push(q.result) }
+  if (q.lost_reason) { conditions.push('lost_reason = ?'); params.push(q.lost_reason) }
+  if (q.price_min) { conditions.push('unit_price >= ?'); params.push(Number(q.price_min)) }
+  if (q.price_max) { conditions.push('unit_price <= ?'); params.push(Number(q.price_max)) }
+  if (q.search) {
+    conditions.push('(estimate_no LIKE ? OR site_name LIKE ? OR client_name LIKE ? OR remarks LIKE ?)')
+    const kw = `%${q.search}%`
+    params.push(kw, kw, kw, kw)
+  }
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''
 
   // 全体集計
