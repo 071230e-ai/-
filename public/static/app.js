@@ -197,11 +197,6 @@ function renderLogin(app) {
           <i class="fas fa-sign-in-alt"></i> ログイン
         </button>
       </form>
-      <div class="mt-6 text-xs text-gray-500 border-t pt-4">
-        <p><strong>テストアカウント:</strong></p>
-        <p>管理者: admin / admin123</p>
-        <p>一般: user / user123</p>
-      </div>
     </div>
   </div>
   `;
