@@ -258,17 +258,11 @@ function filterPanel() {
       </div>
       <div>
         <label class="form-label text-xs">建物の構造</label>
-        <select class="form-select" data-filter="structure">
-          <option value="">全て</option>
-          ${STRUCTURES.map(s => `<option value="${s}" ${f.structure === s ? 'selected' : ''}>${s}</option>`).join('')}
-        </select>
+        <input type="text" class="form-input" data-filter="structure" value="${escapeHtml(f.structure || '')}" placeholder="例：RC、S造、SRC" />
       </div>
       <div>
         <label class="form-label text-xs">建物用途</label>
-        <select class="form-select" data-filter="building_use">
-          <option value="">全て</option>
-          ${BUILDING_USES.map(s => `<option value="${s}" ${f.building_use === s ? 'selected' : ''}>${s}</option>`).join('')}
-        </select>
+        <input type="text" class="form-input" data-filter="building_use" value="${escapeHtml(f.building_use || '')}" placeholder="例：マンション、倉庫、工場" />
       </div>
       <div>
         <label class="form-label text-xs">材料区分</label>
@@ -733,7 +727,7 @@ async function loadAndRenderList() {
 async function renderEstimateForm(main, id) {
   const isEdit = !!id;
   let data = {
-    estimate_no: '', estimate_date: dayjs().format('YYYY-MM-DD'),
+    estimate_date: dayjs().format('YYYY-MM-DD'),
     result: '未定', material_type: '材工',
   };
   if (isEdit) {
@@ -758,8 +752,7 @@ async function renderEstimateForm(main, id) {
       <!-- 基本情報 -->
       <fieldset>
         <legend class="text-sm font-bold text-blue-900 border-b border-blue-900 pb-1 mb-3 w-full"><i class="fas fa-info-circle"></i> 基本情報</legend>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div><label class="form-label">見積番号 *</label><input type="text" name="estimate_no" class="form-input" value="${escapeHtml(data.estimate_no || '')}" required /></div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div><label class="form-label">見積日 *</label><input type="date" name="estimate_date" class="form-input" value="${data.estimate_date || ''}" required /></div>
           <div><label class="form-label">見積担当者</label><input type="text" name="estimator" class="form-input" value="${escapeHtml(data.estimator || '')}" /></div>
         </div>
@@ -768,12 +761,10 @@ async function renderEstimateForm(main, id) {
       <!-- 元請け・現場 -->
       <fieldset>
         <legend class="text-sm font-bold text-blue-900 border-b border-blue-900 pb-1 mb-3 w-full"><i class="fas fa-handshake"></i> 元請け・現場</legend>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div><label class="form-label">元請け会社名 *</label><input type="text" name="client_name" class="form-input" value="${escapeHtml(data.client_name || '')}" required /></div>
           <div><label class="form-label">現場名 *</label><input type="text" name="site_name" class="form-input" value="${escapeHtml(data.site_name || '')}" required /></div>
           <div><label class="form-label">工事場所</label><input type="text" name="site_location" class="form-input" value="${escapeHtml(data.site_location || '')}" /></div>
-          <div><label class="form-label">元請け担当者名</label><input type="text" name="client_contact_name" class="form-input" value="${escapeHtml(data.client_contact_name || '')}" /></div>
-          <div class="md:col-span-2"><label class="form-label">元請け担当者の連絡先</label><input type="text" name="client_contact_info" class="form-input" value="${escapeHtml(data.client_contact_info || '')}" placeholder="電話・メールなど" /></div>
         </div>
       </fieldset>
 
@@ -797,12 +788,10 @@ async function renderEstimateForm(main, id) {
       <!-- 数量・金額 -->
       <fieldset>
         <legend class="text-sm font-bold text-blue-900 border-b border-blue-900 pb-1 mb-3 w-full"><i class="fas fa-calculator"></i> 数量・金額 <span class="text-xs text-gray-500 font-normal">(数量と見積金額を入力すると単価が自動計算されます)</span></legend>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
           <div><label class="form-label">鉄筋数量 (t)</label><input type="number" step="0.01" name="rebar_quantity" id="f_quantity" class="form-input" value="${data.rebar_quantity || ''}" /></div>
           <div><label class="form-label">見積金額 (円)</label><input type="number" step="1" name="estimate_amount" id="f_amount" class="form-input" value="${data.estimate_amount || ''}" /></div>
           <div><label class="form-label">単価 (円/kg)</label><input type="number" step="0.01" name="unit_price" id="f_unitprice" class="form-input bg-blue-50" value="${data.unit_price || ''}" /></div>
-        </div>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
           <div>
             <label class="form-label">材料区分</label>
             <select name="material_type" class="form-select">
@@ -810,26 +799,14 @@ async function renderEstimateForm(main, id) {
               ${MATERIAL_TYPES.map(s => `<option value="${s}" ${data.material_type === s ? 'selected' : ''}>${s}</option>`).join('')}
             </select>
           </div>
-          <div><label class="form-label">予想実行単価 (円/kg)</label><input type="number" step="0.01" name="expected_actual_unit_price" class="form-input" value="${data.expected_actual_unit_price || ''}" /></div>
-          <div><label class="form-label">利益見込み (円)</label><input type="number" step="1" name="profit_estimate" class="form-input" value="${data.profit_estimate || ''}" /></div>
         </div>
       </fieldset>
 
-      <!-- 工期 -->
+      <!-- 工期・スケジュール -->
       <fieldset>
         <legend class="text-sm font-bold text-blue-900 border-b border-blue-900 pb-1 mb-3 w-full"><i class="fas fa-clock"></i> 工期・スケジュール</legend>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div><label class="form-label">工期</label><input type="text" name="construction_period" class="form-input" value="${escapeHtml(data.construction_period || '')}" placeholder="例: 12ヶ月" /></div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div><label class="form-label">着工予定日</label><input type="date" name="construction_start_date" class="form-input" value="${data.construction_start_date || ''}" /></div>
-          <div><label class="form-label">加工開始予定日</label><input type="date" name="processing_start_date" class="form-input" value="${data.processing_start_date || ''}" /></div>
-          <div>
-            <label class="form-label">難易度</label>
-            <select name="difficulty" class="form-select">
-              <option value="">選択</option>
-              ${DIFFICULTIES.map(s => `<option value="${s}" ${data.difficulty === s ? 'selected' : ''}>${s}</option>`).join('')}
-            </select>
-          </div>
-          <div><label class="form-label">現場担当予定者</label><input type="text" name="site_manager" class="form-input" value="${escapeHtml(data.site_manager || '')}" /></div>
           <div class="flex items-center pt-6">
             <label class="inline-flex items-center gap-2">
               <input type="checkbox" name="re_estimate" value="1" ${data.re_estimate ? 'checked' : ''} />
@@ -856,8 +833,7 @@ async function renderEstimateForm(main, id) {
               ${LOST_REASONS.map(s => `<option value="${s}" ${data.lost_reason === s ? 'selected' : ''}>${s}</option>`).join('')}
             </select>
           </div>
-          <div><label class="form-label">受注日</label><input type="date" name="order_date" class="form-input" value="${data.order_date || ''}" /></div>
-          <div class="md:col-span-3"><label class="form-label">競合会社名</label><input type="text" name="competitor" class="form-input" value="${escapeHtml(data.competitor || '')}" placeholder="競合があれば入力" /></div>
+          <div><label class="form-label">競合会社名</label><input type="text" name="competitor" class="form-input" value="${escapeHtml(data.competitor || '')}" placeholder="競合があれば入力" /></div>
         </div>
       </fieldset>
 

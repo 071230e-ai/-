@@ -177,16 +177,17 @@ app.get('/api/estimates', authMiddleware, async (c) => {
 
   if (q.date_from) { conditions.push('estimate_date >= ?'); params.push(q.date_from) }
   if (q.date_to) { conditions.push('estimate_date <= ?'); params.push(q.date_to) }
-  if (q.client_name) { conditions.push('client_name LIKE ?'); params.push(`%${q.client_name}%`) }
-  if (q.structure) { conditions.push('structure = ?'); params.push(q.structure) }
-  if (q.building_use) { conditions.push('building_use = ?'); params.push(q.building_use) }
+  if (q.client_name) { conditions.push('client_name LIKE ?'); params.push(`%${q.client_name.trim()}%`) }
+  // structure / building_use は部分一致検索 (前後空白 trim・大小無視は SQLite LIKE のデフォルト挙動)
+  if (q.structure && q.structure.trim()) { conditions.push('structure LIKE ?'); params.push(`%${q.structure.trim()}%`) }
+  if (q.building_use && q.building_use.trim()) { conditions.push('building_use LIKE ?'); params.push(`%${q.building_use.trim()}%`) }
   if (q.material_type) { conditions.push('material_type = ?'); params.push(q.material_type) }
   if (q.result) { conditions.push('result = ?'); params.push(q.result) }
   if (q.estimator) { conditions.push('estimator = ?'); params.push(q.estimator) }
   if (q.lost_reason) { conditions.push('lost_reason = ?'); params.push(q.lost_reason) }
   if (q.search) {
     conditions.push('(estimate_no LIKE ? OR site_name LIKE ? OR client_name LIKE ? OR remarks LIKE ?)')
-    const s = `%${q.search}%`
+    const s = `%${q.search.trim()}%`
     params.push(s, s, s, s)
   }
   if (q.price_min) { conditions.push('unit_price >= ?'); params.push(parseFloat(q.price_min)) }
@@ -211,6 +212,22 @@ app.get('/api/estimates/:id', authMiddleware, async (c) => {
   return c.json({ estimate: row })
 })
 
+// 見積番号の自動採番 (画面から見積番号入力欄を削除したため、未入力時は自動生成)
+// 形式: EST-YYYYMMDD-HHMMSS-XXX (末尾3桁はランダム、衝突回避用)
+// DB のカラム制約は NOT NULL のみ (UNIQUE ではない) のため空文字でも INSERT 自体は可能だが、
+// 業務上意味のある値を格納するために自動採番する。
+function generateEstimateNo(): string {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  const hh = String(now.getHours()).padStart(2, '0')
+  const mm = String(now.getMinutes()).padStart(2, '0')
+  const ss = String(now.getSeconds()).padStart(2, '0')
+  const rand = String(Math.floor(Math.random() * 1000)).padStart(3, '0')
+  return `EST-${y}${m}${d}-${hh}${mm}${ss}-${rand}`
+}
+
 // 新規登録
 app.post('/api/estimates', authMiddleware, async (c) => {
   const user = c.get('user')!
@@ -223,8 +240,11 @@ app.post('/api/estimates', authMiddleware, async (c) => {
     processing_start_date, difficulty, site_manager, re_estimate, client_contact_name, client_contact_info, created_by
   ) VALUES (?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?,?, ?)`
 
+  // 見積番号: 送られてきていれば使う、無ければ自動採番
+  const estimateNo = (body.estimate_no && String(body.estimate_no).trim()) || generateEstimateNo()
+
   const result = await c.env.DB.prepare(sql).bind(
-    body.estimate_no || '',
+    estimateNo,
     body.estimate_date || new Date().toISOString().split('T')[0],
     body.client_name || '',
     body.site_name || '',
@@ -262,6 +282,16 @@ app.put('/api/estimates/:id', authMiddleware, async (c) => {
   const id = c.req.param('id')
   const body = await c.req.json()
 
+  // 見積番号は画面から削除したため、body に無い場合は既存値を保持する
+  // (空文字での上書きを防ぐ)
+  let estimateNo: string
+  if (body.estimate_no && String(body.estimate_no).trim()) {
+    estimateNo = String(body.estimate_no).trim()
+  } else {
+    const existing = await c.env.DB.prepare('SELECT estimate_no FROM estimates WHERE id = ?').bind(id).first<{ estimate_no: string }>()
+    estimateNo = (existing?.estimate_no) || generateEstimateNo()
+  }
+
   const sql = `UPDATE estimates SET
     estimate_no=?, estimate_date=?, client_name=?, site_name=?, site_location=?, structure=?, building_use=?,
     rebar_quantity=?, estimate_amount=?, unit_price=?, material_type=?, estimator=?, result=?, lost_reason=?, order_date=?, remarks=?,
@@ -271,7 +301,7 @@ app.put('/api/estimates/:id', authMiddleware, async (c) => {
     WHERE id=?`
 
   await c.env.DB.prepare(sql).bind(
-    body.estimate_no || '',
+    estimateNo,
     body.estimate_date || '',
     body.client_name || '',
     body.site_name || '',
@@ -320,9 +350,10 @@ app.get('/api/stats', authMiddleware, async (c) => {
   const params: any[] = []
   if (q.date_from) { conditions.push('estimate_date >= ?'); params.push(q.date_from) }
   if (q.date_to) { conditions.push('estimate_date <= ?'); params.push(q.date_to) }
-  if (q.client_name) { conditions.push('client_name LIKE ?'); params.push(`%${q.client_name}%`) }
-  if (q.structure) { conditions.push('structure = ?'); params.push(q.structure) }
-  if (q.building_use) { conditions.push('building_use = ?'); params.push(q.building_use) }
+  if (q.client_name) { conditions.push('client_name LIKE ?'); params.push(`%${q.client_name.trim()}%`) }
+  // structure / building_use は部分一致検索 (前後空白 trim・大小無視は SQLite LIKE のデフォルト挙動)
+  if (q.structure && q.structure.trim()) { conditions.push('structure LIKE ?'); params.push(`%${q.structure.trim()}%`) }
+  if (q.building_use && q.building_use.trim()) { conditions.push('building_use LIKE ?'); params.push(`%${q.building_use.trim()}%`) }
   if (q.material_type) { conditions.push('material_type = ?'); params.push(q.material_type) }
   if (q.estimator) { conditions.push('estimator = ?'); params.push(q.estimator) }
   // ===== 集計カード未連動の修正: result / lost_reason / price_min / price_max / search を追加 =====
@@ -332,7 +363,7 @@ app.get('/api/stats', authMiddleware, async (c) => {
   if (q.price_max) { conditions.push('unit_price <= ?'); params.push(Number(q.price_max)) }
   if (q.search) {
     conditions.push('(estimate_no LIKE ? OR site_name LIKE ? OR client_name LIKE ? OR remarks LIKE ?)')
-    const kw = `%${q.search}%`
+    const kw = `%${q.search.trim()}%`
     params.push(kw, kw, kw, kw)
   }
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''
