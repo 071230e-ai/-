@@ -159,6 +159,8 @@ function buildEstimateFilters(q: Record<string, string>) {
 
   if (q.date_from) { conditions.push('estimate_date >= ?'); params.push(q.date_from) }
   if (q.date_to) { conditions.push('estimate_date <= ?'); params.push(q.date_to) }
+  if (q.construction_start_from) { conditions.push('construction_start_date >= ?'); params.push(q.construction_start_from) }
+  if (q.construction_start_to) { conditions.push('construction_start_date <= ?'); params.push(q.construction_start_to) }
   if (q.client_name) { conditions.push('client_name LIKE ?'); params.push(`%${q.client_name.trim()}%`) }
   if (q.structure && q.structure.trim()) { conditions.push('structure LIKE ?'); params.push(`%${q.structure.trim()}%`) }
   if (q.building_use && q.building_use.trim()) { conditions.push('building_use LIKE ?'); params.push(`%${q.building_use.trim()}%`) }
@@ -173,6 +175,8 @@ function buildEstimateFilters(q: Record<string, string>) {
   }
   if (q.price_min) { conditions.push('unit_price >= ?'); params.push(Number(q.price_min)) }
   if (q.price_max) { conditions.push('unit_price <= ?'); params.push(Number(q.price_max)) }
+  if (q.quantity_min) { conditions.push('rebar_quantity >= ?'); params.push(Number(q.quantity_min)) }
+  if (q.quantity_max) { conditions.push('rebar_quantity <= ?'); params.push(Number(q.quantity_max)) }
 
   return {
     where: conditions.length ? 'WHERE ' + conditions.join(' AND ') : '',
