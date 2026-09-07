@@ -1,7 +1,100 @@
-// 見積一覧の30件ずつ読み込み + 失注理由UI整合性パッチ
-// 既存 app.js の業務ロジックを変えずに、一覧読み込みとフォーム表示だけを補強する。
+// 見積一覧の30件ずつ読み込み + 失注理由UI整合性 + 追加絞り込みパッチ
+// 既存 app.js の業務ロジックを変えずに必要なUIを補強する。
 
 const ESTIMATE_PAGE_SIZE = 30;
+
+// 共通絞り込みに「着工時期」と「総t数」を追加。
+// State.filters / attachFilterEvents は既存処理をそのまま利用するため、
+// ダッシュボード・一覧・各集計・CSV出力へ同じ条件が引き継がれる。
+filterPanel = function() {
+  const f = State.filters;
+  return `
+  <div class="bg-white border rounded-lg p-4 mb-4 no-print">
+    <div class="flex items-center justify-between mb-3">
+      <div class="font-semibold text-gray-700"><i class="fas fa-filter"></i> 絞り込み</div>
+      <button class="btn btn-secondary btn-sm" id="btn-reset-filter"><i class="fas fa-rotate-left"></i> リセット</button>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div>
+        <label class="form-label text-xs">見積期間(開始)</label>
+        <input type="date" class="form-input" data-filter="date_from" value="${f.date_from || ''}" />
+      </div>
+      <div>
+        <label class="form-label text-xs">見積期間(終了)</label>
+        <input type="date" class="form-input" data-filter="date_to" value="${f.date_to || ''}" />
+      </div>
+      <div>
+        <label class="form-label text-xs">着工時期(開始)</label>
+        <input type="date" class="form-input" data-filter="construction_start_from" value="${f.construction_start_from || ''}" />
+      </div>
+      <div>
+        <label class="form-label text-xs">着工時期(終了)</label>
+        <input type="date" class="form-input" data-filter="construction_start_to" value="${f.construction_start_to || ''}" />
+      </div>
+      <div>
+        <label class="form-label text-xs">元請け会社名</label>
+        <input type="text" class="form-input" data-filter="client_name" value="${escapeHtml(f.client_name || '')}" placeholder="部分一致" />
+      </div>
+      <div>
+        <label class="form-label text-xs">建物の構造</label>
+        <input type="text" class="form-input" data-filter="structure" value="${escapeHtml(f.structure || '')}" placeholder="例：RC、S造、SRC" />
+      </div>
+      <div>
+        <label class="form-label text-xs">建物用途</label>
+        <input type="text" class="form-input" data-filter="building_use" value="${escapeHtml(f.building_use || '')}" placeholder="例：マンション、倉庫、工場" />
+      </div>
+      <div>
+        <label class="form-label text-xs">材料区分</label>
+        <select class="form-select" data-filter="material_type">
+          <option value="">全て</option>
+          ${MATERIAL_TYPES.map(s => `<option value="${s}" ${f.material_type === s ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <label class="form-label text-xs">結果</label>
+        <select class="form-select" data-filter="result">
+          <option value="">全て</option>
+          ${RESULTS.map(s => `<option value="${s}" ${f.result === s ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <label class="form-label text-xs">見積担当者</label>
+        <input type="text" class="form-input" data-filter="estimator" value="${escapeHtml(f.estimator || '')}" />
+      </div>
+      <div>
+        <label class="form-label text-xs">単価下限(円/kg)</label>
+        <input type="number" step="0.01" class="form-input" data-filter="price_min" value="${f.price_min || ''}" />
+      </div>
+      <div>
+        <label class="form-label text-xs">単価上限(円/kg)</label>
+        <input type="number" step="0.01" class="form-input" data-filter="price_max" value="${f.price_max || ''}" />
+      </div>
+      <div>
+        <label class="form-label text-xs">総t数 下限(t)</label>
+        <input type="number" min="0" step="0.01" class="form-input" data-filter="quantity_min" value="${f.quantity_min || ''}" />
+      </div>
+      <div>
+        <label class="form-label text-xs">総t数 上限(t)</label>
+        <input type="number" min="0" step="0.01" class="form-input" data-filter="quantity_max" value="${f.quantity_max || ''}" />
+      </div>
+      <div>
+        <label class="form-label text-xs">失注理由</label>
+        <select class="form-select" data-filter="lost_reason">
+          <option value="">全て</option>
+          ${LOST_REASONS.map(s => `<option value="${s}" ${f.lost_reason === s ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <label class="form-label text-xs">キーワード検索</label>
+        <input type="text" class="form-input" data-filter="search" value="${escapeHtml(f.search || '')}" placeholder="現場名・備考など" />
+      </div>
+    </div>
+    <div class="mt-3 text-right">
+      <button class="btn btn-primary" id="btn-apply-filter"><i class="fas fa-search"></i> 適用</button>
+    </div>
+  </div>
+  `;
+};
 
 loadAndRenderList = async function(reset = true) {
   try {
@@ -122,12 +215,10 @@ function syncLostReasonField() {
   if (!isLost && lostSelect) lostSelect.value = '';
 }
 
-// 元のフォーム側change処理より後に実行して、表示状態を確実に整える。
 document.addEventListener('change', (e) => {
   if (e.target?.id === 'f_result') syncLostReasonField();
 });
 
-// 元のsubmitハンドラがFormDataを作る前に値をクリアする。
 document.addEventListener('submit', (e) => {
   if (e.target?.id !== 'estimate-form') return;
   const resultEl = e.target.querySelector('[name="result"]');
@@ -135,7 +226,6 @@ document.addEventListener('submit', (e) => {
   if (resultEl && resultEl.value !== '失注' && lostEl) lostEl.value = '';
 }, true);
 
-// 編集画面の初期表示時にも適用する。
 const estimateFormObserver = new MutationObserver(() => syncLostReasonField());
 estimateFormObserver.observe(document.body, { childList: true, subtree: true });
 syncLostReasonField();
