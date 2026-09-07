@@ -5,11 +5,14 @@ import { renderer } from './renderer'
 
 type Bindings = {
   DB: D1Database
+  SESSION_SECRET?: string
 }
 
 type Variables = {
   user?: { id: number; username: string; role: string; display_name: string }
 }
+
+type SessionUser = { id: number; username: string; role: string; display_name: string }
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 
@@ -25,48 +28,73 @@ async function sha256(text: string): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-function generateToken(): string {
-  const arr = new Uint8Array(32)
-  crypto.getRandomValues(arr)
-  return Array.from(arr).map((b) => b.toString(16).padStart(2, '0')).join('')
+function getSessionSecret(c: any): string | null {
+  const secret = String(c.env?.SESSION_SECRET || '').trim()
+  return secret.length >= 32 ? secret : null
 }
 
-// シンプルなセッショントークン管理 (in-memory風、トークン=ユーザー情報をBase64エンコード)
-async function makeSessionToken(user: { id: number; username: string; role: string; display_name: string }): Promise<string> {
+async function makeSessionToken(user: SessionUser, secret: string): Promise<string> {
   const payload = JSON.stringify({ ...user, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 })
-  // Base64URLエンコード
   const b64 = btoa(unescape(encodeURIComponent(payload)))
-  const sig = await sha256(b64 + 'murata-tekkin-secret-key-2024')
-  return `${b64}.${sig.substring(0, 16)}`
+  const sig = await sha256(b64 + secret)
+  return `${b64}.${sig}`
 }
 
-async function verifySessionToken(token: string): Promise<{ id: number; username: string; role: string; display_name: string } | null> {
+async function verifySessionToken(token: string, secret: string): Promise<SessionUser | null> {
   try {
     const parts = token.split('.')
     if (parts.length !== 2) return null
     const [b64, sig] = parts
-    const expectedSig = (await sha256(b64 + 'murata-tekkin-secret-key-2024')).substring(0, 16)
-    if (sig !== expectedSig) return null
+    const expectedSig = await sha256(b64 + secret)
+    if (sig.length !== expectedSig.length) return null
+
+    let diff = 0
+    for (let i = 0; i < sig.length; i++) diff |= sig.charCodeAt(i) ^ expectedSig.charCodeAt(i)
+    if (diff !== 0) return null
+
     const payload = JSON.parse(decodeURIComponent(escape(atob(b64))))
     if (payload.exp && payload.exp < Date.now()) return null
-    return { id: payload.id, username: payload.username, role: payload.role, display_name: payload.display_name }
+    return {
+      id: payload.id,
+      username: payload.username,
+      role: payload.role,
+      display_name: payload.display_name,
+    }
   } catch {
     return null
   }
 }
 
+function normalizeResult(value: any): string {
+  return ['受注', '失注', '未定'].includes(String(value)) ? String(value) : '未定'
+}
+
+function normalizeLostReason(result: string, value: any): string | null {
+  if (result !== '失注') return null
+  const text = String(value || '').trim()
+  return text || null
+}
+
+function parsePositiveInt(value: any, fallback: number): number {
+  const n = Number.parseInt(String(value ?? ''), 10)
+  return Number.isFinite(n) && n >= 0 ? n : fallback
+}
+
 // 認証ミドルウェア
 async function authMiddleware(c: any, next: any) {
+  const secret = getSessionSecret(c)
+  if (!secret) return c.json({ error: 'サーバー設定エラーです' }, 500)
+
   const authHeader = c.req.header('Authorization')
   const token = authHeader?.replace('Bearer ', '') || ''
   if (!token) return c.json({ error: '認証が必要です' }, 401)
-  const user = await verifySessionToken(token)
+
+  const user = await verifySessionToken(token, secret)
   if (!user) return c.json({ error: 'セッションが無効です' }, 401)
   c.set('user', user)
   await next()
 }
 
-// 管理者ミドルウェア
 async function adminMiddleware(c: any, next: any) {
   const user = c.get('user')
   if (!user || user.role !== 'admin') return c.json({ error: '管理者権限が必要です' }, 403)
@@ -81,20 +109,15 @@ app.post('/api/login', async (c) => {
   } catch {
     return c.json({ error: 'リクエスト形式が不正です (JSONとして読み取れません)' }, 400)
   }
+
   const { username, password } = body
-  if (!username || !password) {
-    return c.json({ error: 'ユーザー名とパスワードを入力してください' }, 400)
-  }
+  if (!username || !password) return c.json({ error: 'ユーザー名とパスワードを入力してください' }, 400)
 
-  // D1接続チェック
-  if (!c.env.DB) {
-    return c.json({
-      error: 'データベースに接続できません (D1バインディング DB が見つかりません)',
-      hint: 'wrangler.jsonc の d1_databases 設定を確認してください',
-    }, 500)
-  }
+  const secret = getSessionSecret(c)
+  if (!secret) return c.json({ error: 'サーバー設定エラーです' }, 500)
 
-  // usersテーブルの存在確認 + ユーザー取得
+  if (!c.env.DB) return c.json({ error: 'データベースに接続できません' }, 500)
+
   let result: any = null
   try {
     result = await c.env.DB.prepare(
@@ -102,83 +125,41 @@ app.post('/api/login', async (c) => {
     ).bind(username).first<any>()
   } catch (err: any) {
     const msg = err?.message || String(err)
-    if (msg.includes('no such table')) {
-      return c.json({
-        error: 'usersテーブルが存在しません',
-        hint: 'マイグレーション (wrangler d1 migrations apply) と seed の適用が必要です',
-        detail: msg,
-      }, 500)
-    }
-    return c.json({ error: 'データベースエラー', detail: msg }, 500)
+    if (msg.includes('no such table')) return c.json({ error: 'データベースの初期化が必要です' }, 500)
+    return c.json({ error: 'データベースエラー' }, 500)
   }
 
-  if (!result) {
-    return c.json({
-      error: 'ユーザー名またはパスワードが違います',
-      hint: `username='${username}' に該当するユーザーが見つかりません`,
-    }, 401)
-  }
+  if (!result) return c.json({ error: 'ユーザー名またはパスワードが違います' }, 401)
 
-  // 余分な空白や大文字小文字を考慮しつつハッシュ比較
   const passwordHash = await sha256(String(password))
   if (result.password_hash !== passwordHash) {
-    return c.json({
-      error: 'ユーザー名またはパスワードが違います',
-      hint: 'パスワードのハッシュが一致しません',
-    }, 401)
+    return c.json({ error: 'ユーザー名またはパスワードが違います' }, 401)
   }
 
-  const userInfo = {
+  const userInfo: SessionUser = {
     id: result.id,
     username: result.username,
     role: result.role,
     display_name: result.display_name,
   }
-  const token = await makeSessionToken(userInfo)
+
+  const token = await makeSessionToken(userInfo, secret)
   return c.json({ token, user: userInfo })
 })
 
-// ====== ヘルスチェックAPI (デバッグ用) ======
-app.get('/api/health', async (c) => {
-  const health: any = {
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    db: { bound: !!c.env.DB, accessible: false, tables: [], users_count: null },
-  }
-  if (c.env.DB) {
-    try {
-      const { results } = await c.env.DB.prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-      ).all()
-      health.db.accessible = true
-      health.db.tables = (results || []).map((r: any) => r.name)
-      try {
-        const u = await c.env.DB.prepare('SELECT COUNT(*) AS c FROM users').first<any>()
-        health.db.users_count = u?.c ?? 0
-      } catch {}
-    } catch (err: any) {
-      health.db.error = err?.message || String(err)
-    }
-  }
-  return c.json(health)
-})
+// 外部公開してもDB構造やユーザー件数を返さない最小ヘルスチェック
+app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }))
 
-app.get('/api/me', authMiddleware, async (c) => {
-  return c.json({ user: c.get('user') })
-})
+app.get('/api/me', authMiddleware, async (c) => c.json({ user: c.get('user') }))
 
 // ====== 見積データAPI ======
-
-// 一覧取得 (フィルタ付き)
-app.get('/api/estimates', authMiddleware, async (c) => {
-  const q = c.req.query()
+function buildEstimateFilters(q: Record<string, string>) {
   const conditions: string[] = []
   const params: any[] = []
 
   if (q.date_from) { conditions.push('estimate_date >= ?'); params.push(q.date_from) }
   if (q.date_to) { conditions.push('estimate_date <= ?'); params.push(q.date_to) }
   if (q.client_name) { conditions.push('client_name LIKE ?'); params.push(`%${q.client_name.trim()}%`) }
-  // structure / building_use は部分一致検索 (前後空白 trim・大小無視は SQLite LIKE のデフォルト挙動)
   if (q.structure && q.structure.trim()) { conditions.push('structure LIKE ?'); params.push(`%${q.structure.trim()}%`) }
   if (q.building_use && q.building_use.trim()) { conditions.push('building_use LIKE ?'); params.push(`%${q.building_use.trim()}%`) }
   if (q.material_type) { conditions.push('material_type = ?'); params.push(q.material_type) }
@@ -190,21 +171,49 @@ app.get('/api/estimates', authMiddleware, async (c) => {
     const s = `%${q.search.trim()}%`
     params.push(s, s, s, s)
   }
-  if (q.price_min) { conditions.push('unit_price >= ?'); params.push(parseFloat(q.price_min)) }
-  if (q.price_max) { conditions.push('unit_price <= ?'); params.push(parseFloat(q.price_max)) }
+  if (q.price_min) { conditions.push('unit_price >= ?'); params.push(Number(q.price_min)) }
+  if (q.price_max) { conditions.push('unit_price <= ?'); params.push(Number(q.price_max)) }
 
-  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''
+  return {
+    where: conditions.length ? 'WHERE ' + conditions.join(' AND ') : '',
+    params,
+  }
+}
+
+app.get('/api/estimates', authMiddleware, async (c) => {
+  const q = c.req.query()
+  const { where, params } = buildEstimateFilters(q)
   const sortField = q.sort || 'estimate_date'
   const sortOrder = (q.order || 'desc').toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
   const allowedSort = ['estimate_date', 'estimate_no', 'client_name', 'site_name', 'structure', 'rebar_quantity', 'estimate_amount', 'unit_price', 'result']
   const safeSortField = allowedSort.includes(sortField) ? sortField : 'estimate_date'
 
-  const sql = `SELECT * FROM estimates ${where} ORDER BY ${safeSortField} ${sortOrder}, id DESC`
-  const { results } = await c.env.DB.prepare(sql).bind(...params).all()
-  return c.json({ estimates: results })
+  const hasPaging = q.limit !== undefined && q.limit !== ''
+  const limit = hasPaging ? Math.min(Math.max(parsePositiveInt(q.limit, 30), 1), 100) : null
+  const offset = hasPaging ? parsePositiveInt(q.offset, 0) : 0
+
+  let totalCount: number | null = null
+  if (hasPaging) {
+    const total = await c.env.DB.prepare(`SELECT COUNT(*) AS count FROM estimates ${where}`).bind(...params).first<any>()
+    totalCount = Number(total?.count || 0)
+  }
+
+  let sql = `SELECT * FROM estimates ${where} ORDER BY ${safeSortField} ${sortOrder}, id DESC`
+  const queryParams = [...params]
+  if (limit !== null) {
+    sql += ' LIMIT ? OFFSET ?'
+    queryParams.push(limit, offset)
+  }
+
+  const { results } = await c.env.DB.prepare(sql).bind(...queryParams).all()
+  const effectiveTotal = totalCount ?? results.length
+  return c.json({
+    estimates: results,
+    total_count: effectiveTotal,
+    has_more: limit !== null ? offset + results.length < effectiveTotal : false,
+  })
 })
 
-// 単一取得
 app.get('/api/estimates/:id', authMiddleware, async (c) => {
   const id = c.req.param('id')
   const row = await c.env.DB.prepare('SELECT * FROM estimates WHERE id = ?').bind(id).first()
@@ -212,10 +221,6 @@ app.get('/api/estimates/:id', authMiddleware, async (c) => {
   return c.json({ estimate: row })
 })
 
-// 見積番号の自動採番 (画面から見積番号入力欄を削除したため、未入力時は自動生成)
-// 形式: EST-YYYYMMDD-HHMMSS-XXX (末尾3桁はランダム、衝突回避用)
-// DB のカラム制約は NOT NULL のみ (UNIQUE ではない) のため空文字でも INSERT 自体は可能だが、
-// 業務上意味のある値を格納するために自動採番する。
 function generateEstimateNo(): string {
   const now = new Date()
   const y = now.getFullYear()
@@ -228,10 +233,12 @@ function generateEstimateNo(): string {
   return `EST-${y}${m}${d}-${hh}${mm}${ss}-${rand}`
 }
 
-// 新規登録
 app.post('/api/estimates', authMiddleware, async (c) => {
   const user = c.get('user')!
   const body = await c.req.json()
+  const resultValue = normalizeResult(body.result)
+  const lostReason = normalizeLostReason(resultValue, body.lost_reason)
+  const estimateNo = (body.estimate_no && String(body.estimate_no).trim()) || generateEstimateNo()
 
   const sql = `INSERT INTO estimates (
     estimate_no, estimate_date, client_name, site_name, site_location, structure, building_use,
@@ -240,57 +247,59 @@ app.post('/api/estimates', authMiddleware, async (c) => {
     processing_start_date, difficulty, site_manager, re_estimate, client_contact_name, client_contact_info, created_by
   ) VALUES (?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?,?, ?)`
 
-  // 見積番号: 送られてきていれば使う、無ければ自動採番
-  const estimateNo = (body.estimate_no && String(body.estimate_no).trim()) || generateEstimateNo()
+  try {
+    const result = await c.env.DB.prepare(sql).bind(
+      estimateNo,
+      body.estimate_date || new Date().toISOString().split('T')[0],
+      body.client_name || '',
+      body.site_name || '',
+      body.site_location || null,
+      body.structure || null,
+      body.building_use || null,
+      body.rebar_quantity ? Number(body.rebar_quantity) : null,
+      body.estimate_amount ? Number(body.estimate_amount) : null,
+      body.unit_price ? Number(body.unit_price) : null,
+      body.material_type || null,
+      body.estimator || null,
+      resultValue,
+      lostReason,
+      body.order_date || null,
+      body.remarks || null,
+      body.competitor || null,
+      body.expected_actual_unit_price ? Number(body.expected_actual_unit_price) : null,
+      body.profit_estimate ? Number(body.profit_estimate) : null,
+      body.construction_period || null,
+      body.construction_start_date || null,
+      body.processing_start_date || null,
+      body.difficulty || null,
+      body.site_manager || null,
+      body.re_estimate ? 1 : 0,
+      body.client_contact_name || null,
+      body.client_contact_info || null,
+      user.id
+    ).run()
 
-  const result = await c.env.DB.prepare(sql).bind(
-    estimateNo,
-    body.estimate_date || new Date().toISOString().split('T')[0],
-    body.client_name || '',
-    body.site_name || '',
-    body.site_location || null,
-    body.structure || null,
-    body.building_use || null,
-    body.rebar_quantity ? parseFloat(body.rebar_quantity) : null,
-    body.estimate_amount ? parseFloat(body.estimate_amount) : null,
-    body.unit_price ? parseFloat(body.unit_price) : null,
-    body.material_type || null,
-    body.estimator || null,
-    body.result || '未定',
-    body.lost_reason || null,
-    body.order_date || null,
-    body.remarks || null,
-    body.competitor || null,
-    body.expected_actual_unit_price ? parseFloat(body.expected_actual_unit_price) : null,
-    body.profit_estimate ? parseFloat(body.profit_estimate) : null,
-    body.construction_period || null,
-    body.construction_start_date || null,
-    body.processing_start_date || null,
-    body.difficulty || null,
-    body.site_manager || null,
-    body.re_estimate ? 1 : 0,
-    body.client_contact_name || null,
-    body.client_contact_info || null,
-    user.id
-  ).run()
-
-  return c.json({ id: result.meta.last_row_id, success: true })
+    return c.json({ id: result.meta.last_row_id, success: true })
+  } catch (err: any) {
+    if (String(err?.message || err).includes('UNIQUE constraint failed: estimates.estimate_no')) {
+      return c.json({ error: '見積番号が重複しました。もう一度登録してください' }, 409)
+    }
+    throw err
+  }
 })
 
-// 更新
 app.put('/api/estimates/:id', authMiddleware, async (c) => {
   const id = c.req.param('id')
   const body = await c.req.json()
 
-  // 見積番号は画面から削除したため、body に無い場合は既存値を保持する
-  // (空文字での上書きを防ぐ)
-  let estimateNo: string
-  if (body.estimate_no && String(body.estimate_no).trim()) {
-    estimateNo = String(body.estimate_no).trim()
-  } else {
-    const existing = await c.env.DB.prepare('SELECT estimate_no FROM estimates WHERE id = ?').bind(id).first<{ estimate_no: string }>()
-    estimateNo = (existing?.estimate_no) || generateEstimateNo()
-  }
+  const existing = await c.env.DB.prepare('SELECT estimate_no FROM estimates WHERE id = ?').bind(id).first<{ estimate_no: string }>()
+  if (!existing) return c.json({ error: '見積データが見つかりません' }, 404)
+
+  const estimateNo = body.estimate_no && String(body.estimate_no).trim()
+    ? String(body.estimate_no).trim()
+    : existing.estimate_no
+  const resultValue = normalizeResult(body.result)
+  const lostReason = normalizeLostReason(resultValue, body.lost_reason)
 
   const sql = `UPDATE estimates SET
     estimate_no=?, estimate_date=?, client_name=?, site_name=?, site_location=?, structure=?, building_use=?,
@@ -300,75 +309,58 @@ app.put('/api/estimates/:id', authMiddleware, async (c) => {
     updated_at=CURRENT_TIMESTAMP
     WHERE id=?`
 
-  await c.env.DB.prepare(sql).bind(
-    estimateNo,
-    body.estimate_date || '',
-    body.client_name || '',
-    body.site_name || '',
-    body.site_location || null,
-    body.structure || null,
-    body.building_use || null,
-    body.rebar_quantity ? parseFloat(body.rebar_quantity) : null,
-    body.estimate_amount ? parseFloat(body.estimate_amount) : null,
-    body.unit_price ? parseFloat(body.unit_price) : null,
-    body.material_type || null,
-    body.estimator || null,
-    body.result || '未定',
-    body.lost_reason || null,
-    body.order_date || null,
-    body.remarks || null,
-    body.competitor || null,
-    body.expected_actual_unit_price ? parseFloat(body.expected_actual_unit_price) : null,
-    body.profit_estimate ? parseFloat(body.profit_estimate) : null,
-    body.construction_period || null,
-    body.construction_start_date || null,
-    body.processing_start_date || null,
-    body.difficulty || null,
-    body.site_manager || null,
-    body.re_estimate ? 1 : 0,
-    body.client_contact_name || null,
-    body.client_contact_info || null,
-    id
-  ).run()
-
-  return c.json({ success: true })
+  try {
+    await c.env.DB.prepare(sql).bind(
+      estimateNo,
+      body.estimate_date || '',
+      body.client_name || '',
+      body.site_name || '',
+      body.site_location || null,
+      body.structure || null,
+      body.building_use || null,
+      body.rebar_quantity ? Number(body.rebar_quantity) : null,
+      body.estimate_amount ? Number(body.estimate_amount) : null,
+      body.unit_price ? Number(body.unit_price) : null,
+      body.material_type || null,
+      body.estimator || null,
+      resultValue,
+      lostReason,
+      body.order_date || null,
+      body.remarks || null,
+      body.competitor || null,
+      body.expected_actual_unit_price ? Number(body.expected_actual_unit_price) : null,
+      body.profit_estimate ? Number(body.profit_estimate) : null,
+      body.construction_period || null,
+      body.construction_start_date || null,
+      body.processing_start_date || null,
+      body.difficulty || null,
+      body.site_manager || null,
+      body.re_estimate ? 1 : 0,
+      body.client_contact_name || null,
+      body.client_contact_info || null,
+      id
+    ).run()
+    return c.json({ success: true })
+  } catch (err: any) {
+    if (String(err?.message || err).includes('UNIQUE constraint failed: estimates.estimate_no')) {
+      return c.json({ error: '見積番号が重複しています' }, 409)
+    }
+    throw err
+  }
 })
 
-// 削除 (管理者のみ)
 app.delete('/api/estimates/:id', authMiddleware, adminMiddleware, async (c) => {
   const id = c.req.param('id')
-  await c.env.DB.prepare('DELETE FROM estimates WHERE id = ?').bind(id).run()
+  const result = await c.env.DB.prepare('DELETE FROM estimates WHERE id = ?').bind(id).run()
+  if (!result.meta.changes) return c.json({ error: '見積データが見つかりません' }, 404)
   return c.json({ success: true })
 })
 
 // ====== 集計API ======
-
-// 全体集計＋元請け別＋構造別＋単価帯別＋失注理由別 (1リクエストでまとめて返す)
 app.get('/api/stats', authMiddleware, async (c) => {
   const q = c.req.query()
-  const conditions: string[] = []
-  const params: any[] = []
-  if (q.date_from) { conditions.push('estimate_date >= ?'); params.push(q.date_from) }
-  if (q.date_to) { conditions.push('estimate_date <= ?'); params.push(q.date_to) }
-  if (q.client_name) { conditions.push('client_name LIKE ?'); params.push(`%${q.client_name.trim()}%`) }
-  // structure / building_use は部分一致検索 (前後空白 trim・大小無視は SQLite LIKE のデフォルト挙動)
-  if (q.structure && q.structure.trim()) { conditions.push('structure LIKE ?'); params.push(`%${q.structure.trim()}%`) }
-  if (q.building_use && q.building_use.trim()) { conditions.push('building_use LIKE ?'); params.push(`%${q.building_use.trim()}%`) }
-  if (q.material_type) { conditions.push('material_type = ?'); params.push(q.material_type) }
-  if (q.estimator) { conditions.push('estimator = ?'); params.push(q.estimator) }
-  // ===== 集計カード未連動の修正: result / lost_reason / price_min / price_max / search を追加 =====
-  if (q.result) { conditions.push('result = ?'); params.push(q.result) }
-  if (q.lost_reason) { conditions.push('lost_reason = ?'); params.push(q.lost_reason) }
-  if (q.price_min) { conditions.push('unit_price >= ?'); params.push(Number(q.price_min)) }
-  if (q.price_max) { conditions.push('unit_price <= ?'); params.push(Number(q.price_max)) }
-  if (q.search) {
-    conditions.push('(estimate_no LIKE ? OR site_name LIKE ? OR client_name LIKE ? OR remarks LIKE ?)')
-    const kw = `%${q.search.trim()}%`
-    params.push(kw, kw, kw, kw)
-  }
-  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''
+  const { where, params } = buildEstimateFilters(q)
 
-  // 全体集計
   const overall = await c.env.DB.prepare(`
     SELECT
       COUNT(*) AS total_count,
@@ -382,7 +374,6 @@ app.get('/api/stats', authMiddleware, async (c) => {
     FROM estimates ${where}
   `).bind(...params).first<any>()
 
-  // 元請け別
   const { results: byClient } = await c.env.DB.prepare(`
     SELECT
       client_name,
@@ -399,7 +390,6 @@ app.get('/api/stats', authMiddleware, async (c) => {
     ORDER BY total_amount DESC
   `).bind(...params).all()
 
-  // 構造別
   const { results: byStructure } = await c.env.DB.prepare(`
     SELECT
       COALESCE(structure, '(未設定)') AS structure,
@@ -415,7 +405,6 @@ app.get('/api/stats', authMiddleware, async (c) => {
     ORDER BY total_count DESC
   `).bind(...params).all()
 
-  // 単価帯別 (CASE文で分類)
   const { results: byPrice } = await c.env.DB.prepare(`
     SELECT
       CASE
@@ -437,7 +426,6 @@ app.get('/api/stats', authMiddleware, async (c) => {
     ORDER BY MIN(unit_price)
   `).bind(...params).all()
 
-  // 失注理由別 (NULL も空文字も "不明" として扱う)
   const { results: byLostReason } = await c.env.DB.prepare(`
     SELECT
       COALESCE(NULLIF(TRIM(lost_reason), ''), '不明') AS lost_reason,
@@ -447,7 +435,6 @@ app.get('/api/stats', authMiddleware, async (c) => {
     ORDER BY count DESC
   `).bind(...params).all()
 
-  // 月別集計 (年月をキーに) + 金額も同時取得
   const { results: byMonth } = await c.env.DB.prepare(`
     SELECT
       substr(estimate_date, 1, 7) AS month,
