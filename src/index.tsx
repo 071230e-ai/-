@@ -176,7 +176,7 @@ function buildEstimateFilters(q: Record<string, string>) {
   if (q.price_max) { conditions.push('unit_price <= ?'); params.push(Number(q.price_max)) }
   if (q.quantity_min) { conditions.push('rebar_quantity >= ?'); params.push(Number(q.quantity_min)) }
   if (q.quantity_max) { conditions.push('rebar_quantity <= ?'); params.push(Number(q.quantity_max)) }
-  if (q.client_ordered === '1' || q.client_ordered === '0') {
+  if (q.client_ordered === '1' || q.client_ordered === '2' || q.client_ordered === '0') {
     conditions.push('client_ordered = ?')
     params.push(Number(q.client_ordered))
   }
@@ -282,7 +282,7 @@ app.post('/api/estimates', authMiddleware, async (c) => {
       body.difficulty || null,
       body.site_manager || null,
       body.re_estimate ? 1 : 0,
-      body.client_ordered ? 1 : 0,
+      [0, 1, 2].includes(Number(body.client_ordered)) ? Number(body.client_ordered) : 0,
       body.client_contact_name || null,
       body.client_contact_info || null,
       user.id
@@ -346,7 +346,7 @@ app.put('/api/estimates/:id', authMiddleware, async (c) => {
       body.difficulty || null,
       body.site_manager || null,
       body.re_estimate ? 1 : 0,
-      body.client_ordered ? 1 : 0,
+      [0, 1, 2].includes(Number(body.client_ordered)) ? Number(body.client_ordered) : 0,
       body.client_contact_name || null,
       body.client_contact_info || null,
       id
