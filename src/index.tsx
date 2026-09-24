@@ -91,6 +91,7 @@ function normalizeEstimateItems(value: any): any[] {
   if (!Array.isArray(value)) return []
   return value
     .map((item: any, index: number) => ({
+      item_code: String(item?.item_code || '').trim() || null,
       category: String(item?.category || '').trim() || null,
       description: String(item?.description || '').trim() || null,
       specification: String(item?.specification || '').trim() || null,
@@ -102,7 +103,7 @@ function normalizeEstimateItems(value: any): any[] {
       sort_order: Number.isFinite(Number(item?.sort_order)) ? Number(item.sort_order) : index,
     }))
     .filter((item: any) =>
-      item.category || item.description || item.specification || item.quantity !== null ||
+      item.item_code || item.category || item.description || item.specification || item.quantity !== null ||
       item.unit_price !== null || item.amount !== null || item.remarks
     )
 }
@@ -112,10 +113,11 @@ async function replaceEstimateItems(db: D1Database, estimateId: number | string,
     db.prepare('DELETE FROM estimate_items WHERE estimate_id = ?').bind(estimateId),
     ...items.map((item) =>
       db.prepare(`INSERT INTO estimate_items
-        (estimate_id, category, description, specification, quantity, unit, unit_price, amount, remarks, sort_order)
-        VALUES (?,?,?,?,?,?,?,?,?,?)`)
+        (estimate_id, item_code, category, description, specification, quantity, unit, unit_price, amount, remarks, sort_order)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
         .bind(
           estimateId,
+          item.item_code,
           item.category,
           item.description,
           item.specification,
@@ -307,10 +309,10 @@ app.post('/api/estimates', authMiddleware, async (c) => {
   // (DB カラムと既存データは保持。新規レコードでは NULL のまま挿入される)
   const sql = `INSERT INTO estimates (
     estimate_no, estimate_date, client_name, site_name, site_location, structure, building_use,
-    rebar_quantity, estimate_amount, net_amount, unit_price, material_type, result, lost_reason, order_date, remarks,
+    above_ground_floors, basement_floors, total_floor_area, rebar_quantity, estimate_amount, net_amount, unit_price, material_type, result, lost_reason, order_date, remarks,
     competitor, expected_actual_unit_price, profit_estimate, construction_period, construction_start_date,
     processing_start_date, difficulty, site_manager, re_estimate, client_ordered, client_contact_name, client_contact_info, created_by
-  ) VALUES (?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?,?, ?)`
+  ) VALUES (?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?,?, ?)`
 
   try {
     const result = await c.env.DB.prepare(sql).bind(
@@ -321,6 +323,9 @@ app.post('/api/estimates', authMiddleware, async (c) => {
       body.site_location || null,
       body.structure || null,
       body.building_use || null,
+      body.above_ground_floors !== undefined && body.above_ground_floors !== '' ? Number(body.above_ground_floors) : null,
+      body.basement_floors !== undefined && body.basement_floors !== '' ? Number(body.basement_floors) : null,
+      body.total_floor_area !== undefined && body.total_floor_area !== '' ? Number(body.total_floor_area) : null,
       body.rebar_quantity ? Number(body.rebar_quantity) : null,
       body.estimate_amount ? Number(body.estimate_amount) : null,
       body.net_amount !== undefined && body.net_amount !== '' ? Number(body.net_amount) : null,
@@ -375,7 +380,7 @@ app.put('/api/estimates/:id', authMiddleware, async (c) => {
   // (画面から入力欄が削除されたため送信されない。DB上の既存値は不変)
   const sql = `UPDATE estimates SET
     estimate_no=?, estimate_date=?, client_name=?, site_name=?, site_location=?, structure=?, building_use=?,
-    rebar_quantity=?, estimate_amount=?, net_amount=?, unit_price=?, material_type=?, result=?, lost_reason=?, order_date=?, remarks=?,
+    above_ground_floors=?, basement_floors=?, total_floor_area=?, rebar_quantity=?, estimate_amount=?, net_amount=?, unit_price=?, material_type=?, result=?, lost_reason=?, order_date=?, remarks=?,
     competitor=?, expected_actual_unit_price=?, profit_estimate=?, construction_period=?, construction_start_date=?,
     processing_start_date=?, difficulty=?, site_manager=?, re_estimate=?, client_ordered=?, client_contact_name=?, client_contact_info=?,
     updated_at=CURRENT_TIMESTAMP
@@ -390,6 +395,9 @@ app.put('/api/estimates/:id', authMiddleware, async (c) => {
       body.site_location || null,
       body.structure || null,
       body.building_use || null,
+      body.above_ground_floors !== undefined && body.above_ground_floors !== '' ? Number(body.above_ground_floors) : null,
+      body.basement_floors !== undefined && body.basement_floors !== '' ? Number(body.basement_floors) : null,
+      body.total_floor_area !== undefined && body.total_floor_area !== '' ? Number(body.total_floor_area) : null,
       body.rebar_quantity ? Number(body.rebar_quantity) : null,
       body.estimate_amount ? Number(body.estimate_amount) : null,
       body.net_amount !== undefined && body.net_amount !== '' ? Number(body.net_amount) : null,
