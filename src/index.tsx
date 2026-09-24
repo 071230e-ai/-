@@ -326,6 +326,29 @@ app.get('/api/similar-search', authMiddleware, async (c) => {
   return c.json({ candidates })
 })
 
+// 見積明細のユーザー追加比較項目
+app.get('/api/estimate-item-codes', authMiddleware, async (c) => {
+  const { results } = await c.env.DB.prepare(
+    'SELECT code, label FROM estimate_item_codes ORDER BY label COLLATE NOCASE, id'
+  ).all<any>()
+  return c.json({ items: results || [] })
+})
+
+app.post('/api/estimate-item-codes', authMiddleware, async (c) => {
+  let body: any
+  try { body = await c.req.json() } catch { return c.json({ error: 'リクエスト形式が不正です' }, 400) }
+  const label = String(body?.label || '').trim()
+  if (!label) return c.json({ error: '比較項目名を入力してください' }, 400)
+  if (label.length > 100) return c.json({ error: '比較項目名は100文字以内で入力してください' }, 400)
+
+  const existing = await c.env.DB.prepare('SELECT code, label FROM estimate_item_codes WHERE label = ? COLLATE NOCASE').bind(label).first<any>()
+  if (existing) return c.json({ item: existing, already_exists: true })
+
+  const code = 'CUSTOM_' + crypto.randomUUID().replace(/-/g, '').toUpperCase()
+  await c.env.DB.prepare('INSERT INTO estimate_item_codes (code, label) VALUES (?, ?)').bind(code, label).run()
+  return c.json({ item: { code, label }, already_exists: false }, 201)
+})
+
 app.get('/api/estimates/:id', authMiddleware, async (c) => {
   const id = c.req.param('id')
   const row = await c.env.DB.prepare('SELECT * FROM estimates WHERE id = ?').bind(id).first()
@@ -400,6 +423,7 @@ app.get('/api/estimates/:id/compare', authMiddleware, async (c) => {
   const { results: itemsRaw } = await c.env.DB.prepare(
     `SELECT * FROM estimate_items WHERE estimate_id IN (${placeholders}) ORDER BY sort_order, id`
   ).bind(...projectIds).all<any>()
+  const { results: customCodes } = await c.env.DB.prepare('SELECT code, label FROM estimate_item_codes').all<any>()
 
   const codeLabels: Record<string, string> = {
     REBAR_D10:'異形鉄筋 D10', REBAR_D13:'異形鉄筋 D13', REBAR_D16:'異形鉄筋 D16', REBAR_D19:'異形鉄筋 D19',
@@ -409,6 +433,7 @@ app.get('/api/estimates/:id/compare', authMiddleware, async (c) => {
     GAS_D29:'ガス圧接 D29', GAS_D32:'ガス圧接 D32', GAS_D35:'ガス圧接 D35', GAS_DAILY:'圧接常用費',
     GAS_TEST:'圧接試験費', STAND:'梁架台費', WELFARE:'法定福利費', EXPENSE:'諸経費', OTHER:'その他'
   }
+  for (const item of (customCodes || [])) codeLabels[String(item.code)] = String(item.label)
 
   const metricFor = (item: any, project: any) => {
     const code = String(item.item_code || '')
