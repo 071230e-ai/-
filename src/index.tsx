@@ -678,6 +678,7 @@ app.get('/login', renderApp)
 app.get('/dashboard', renderApp)
 app.get('/estimates', renderApp)
 app.get('/estimates/new', renderApp)
+app.get('/estimates/:id/detail', renderApp)
 app.get('/estimates/:id', renderApp)
 app.get('/stats/*', renderApp)
 
