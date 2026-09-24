@@ -799,11 +799,12 @@ async function renderEstimateForm(main, id) {
 
       <!-- 数量・金額 -->
       <fieldset>
-        <legend class="text-sm font-bold text-blue-900 border-b border-blue-900 pb-1 mb-3 w-full"><i class="fas fa-calculator"></i> 数量・金額 <span class="text-xs text-gray-500 font-normal">(数量と見積金額を入力すると単価が自動計算されます)</span></legend>
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+        <legend class="text-sm font-bold text-blue-900 border-b border-blue-900 pb-1 mb-3 w-full"><i class="fas fa-calculator"></i> 数量・金額 <span class="text-xs text-gray-500 font-normal">(数量とNET金額を入力すると単価が自動計算されます)</span></legend>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
           <div><label class="form-label">鉄筋数量 (t)</label><input type="number" step="0.01" name="rebar_quantity" id="f_quantity" class="form-input" value="${data.rebar_quantity || ''}" /></div>
           <div><label class="form-label">見積金額 (円)</label><input type="number" step="1" name="estimate_amount" id="f_amount" class="form-input" value="${data.estimate_amount || ''}" /></div>
-          <div><label class="form-label">単価 (円/kg)</label><input type="number" step="0.01" name="unit_price" id="f_unitprice" class="form-input bg-blue-50" value="${data.unit_price || ''}" /></div>
+          <div><label class="form-label">NET金額 (円)</label><input type="number" step="1" name="net_amount" id="f_net_amount" class="form-input" value="${data.net_amount ?? data.estimate_amount ?? ''}" /></div>
+          <div><label class="form-label">単価 (円/kg)</label><input type="number" step="0.01" name="unit_price" id="f_unitprice" class="form-input bg-blue-50" value="${data.unit_price || ''}" readonly /></div>
           <div>
             <label class="form-label">材料区分</label>
             <select name="material_type" class="form-select">
@@ -863,19 +864,22 @@ async function renderEstimateForm(main, id) {
   `;
   attachLayoutEvents();
 
-  // 自動計算: 単価 = 見積金額 ÷ 数量 ÷ 1000
+  // 自動計算: 単価 = NET金額 ÷ 数量 ÷ 1000
   const qEl = document.getElementById('f_quantity');
-  const aEl = document.getElementById('f_amount');
+  const netEl = document.getElementById('f_net_amount');
   const uEl = document.getElementById('f_unitprice');
   const updateUnitPrice = () => {
     const q = parseFloat(qEl.value);
-    const a = parseFloat(aEl.value);
-    if (q > 0 && a > 0) {
-      uEl.value = (a / q / 1000).toFixed(2);
+    const net = parseFloat(netEl.value);
+    if (q > 0 && net >= 0) {
+      uEl.value = (net / q / 1000).toFixed(2);
+    } else {
+      uEl.value = '';
     }
   };
   qEl.addEventListener('input', updateUnitPrice);
-  aEl.addEventListener('input', updateUnitPrice);
+  netEl.addEventListener('input', updateUnitPrice);
+  updateUnitPrice();
 
   // 失注理由の表示制御
   const resultEl = document.getElementById('f_result');
@@ -1166,10 +1170,10 @@ async function exportCSV(type) {
   let rows = [], headers = [], filename = '';
   if (type === 'estimates') {
     const { data } = await API.get('/api/estimates', { params: State.filters });
-    headers = ['見積番号','見積日','元請け受注済','元請け','現場名','工事場所','構造','建物用途','数量(t)','見積金額','単価(円/kg)','材料区分','結果','失注理由','受注日','備考','競合','予想実行単価','利益見込み','工期','着工予定日','加工開始予定日','難易度','現場担当','再見積','元請担当者','連絡先'];
+    headers = ['見積番号','見積日','元請け受注状況','元請け','現場名','工事場所','構造','建物用途','数量(t)','見積金額','NET金額','単価(円/kg)','材料区分','結果','失注理由','受注日','備考','競合','予想実行単価','利益見込み','工期','着工予定日','加工開始予定日','難易度','現場担当','再見積','元請担当者','連絡先'];
     rows = data.estimates.map(e => [
       e.estimate_no, e.estimate_date, Number(e.client_ordered) === 1 ? '受注済' : Number(e.client_ordered) === 2 ? '失注' : '未受注', e.client_name, e.site_name, e.site_location, e.structure, e.building_use,
-      e.rebar_quantity, e.estimate_amount, e.unit_price, e.material_type, e.result, e.lost_reason,
+      e.rebar_quantity, e.estimate_amount, e.net_amount, e.unit_price, e.material_type, e.result, e.lost_reason,
       e.order_date, e.remarks, e.competitor, e.expected_actual_unit_price, e.profit_estimate, e.construction_period,
       e.construction_start_date, e.processing_start_date, e.difficulty, e.site_manager, e.re_estimate ? '有' : '', e.client_contact_name, e.client_contact_info
     ]);
