@@ -320,8 +320,12 @@ app.get('/api/estimates/:id/similar', authMiddleware, async (c) => {
     if (target.structure && row.structure) add(target.structure === row.structure ? 1 : 0, 30)
     if (target.building_use && row.building_use) add(target.building_use === row.building_use ? 1 : 0, 15)
 
+    const hasTargetFloors = target.above_ground_floors !== null && target.above_ground_floors !== undefined && target.above_ground_floors !== ''
+    const hasRowFloors = row.above_ground_floors !== null && row.above_ground_floors !== undefined && row.above_ground_floors !== ''
     const tf = Number(target.above_ground_floors), rf = Number(row.above_ground_floors)
-    if (Number.isFinite(tf) && Number.isFinite(rf)) add(Math.max(0, 1 - Math.abs(tf - rf) / Math.max(3, tf || 1)), 20)
+    if (hasTargetFloors && hasRowFloors && Number.isFinite(tf) && Number.isFinite(rf)) {
+      add(Math.max(0, 1 - Math.abs(tf - rf) / Math.max(3, tf || 1)), 20)
+    }
 
     if (target.rebar_quantity && row.rebar_quantity) add(ratioScore(target.rebar_quantity, row.rebar_quantity, 0.6), 20)
     if (target.total_floor_area && row.total_floor_area) add(ratioScore(target.total_floor_area, row.total_floor_area, 0.6), 15)
@@ -360,24 +364,29 @@ app.get('/api/estimates/:id/compare', authMiddleware, async (c) => {
 
   const metricFor = (item: any, project: any) => {
     const code = String(item.item_code || '')
-    const amount = Number(item.amount)
-    const qty = Number(item.quantity)
-    const unitPrice = Number(item.unit_price)
-    const rebarKg = Number(project?.rebar_quantity) * 1000
-    const net = Number(project?.net_amount)
+    const hasAmount = item.amount !== null && item.amount !== undefined && item.amount !== ''
+    const hasQty = item.quantity !== null && item.quantity !== undefined && item.quantity !== ''
+    const hasUnitPrice = item.unit_price !== null && item.unit_price !== undefined && item.unit_price !== ''
+    const hasRebarQuantity = project?.rebar_quantity !== null && project?.rebar_quantity !== undefined && project?.rebar_quantity !== ''
+    const hasNet = project?.net_amount !== null && project?.net_amount !== undefined && project?.net_amount !== ''
+    const amount = hasAmount ? Number(item.amount) : null
+    const qty = hasQty ? Number(item.quantity) : null
+    const unitPrice = hasUnitPrice ? Number(item.unit_price) : null
+    const rebarKg = hasRebarQuantity ? Number(project.rebar_quantity) * 1000 : null
+    const net = hasNet ? Number(project.net_amount) : null
 
     if (code === 'PROCESSING' || code === 'SPACER' || code === 'ASSEMBLY_TRANSPORT') {
-      if (Number.isFinite(unitPrice) && unitPrice >= 0) return { value: unitPrice, label: '円/kg' }
-      return { value: rebarKg > 0 && Number.isFinite(amount) ? amount / rebarKg : null, label: '円/kg' }
+      if (unitPrice !== null && Number.isFinite(unitPrice) && unitPrice >= 0) return { value: unitPrice, label: '円/kg' }
+      return { value: rebarKg !== null && rebarKg > 0 && amount !== null && Number.isFinite(amount) ? amount / rebarKg : null, label: '円/kg' }
     }
     if (code.startsWith('GAS_') && code !== 'GAS_DAILY' && code !== 'GAS_TEST') {
-      if (Number.isFinite(unitPrice) && unitPrice >= 0) return { value: unitPrice, label: '円/箇所' }
-      return { value: qty > 0 && Number.isFinite(amount) ? amount / qty : null, label: '円/箇所' }
+      if (unitPrice !== null && Number.isFinite(unitPrice) && unitPrice >= 0) return { value: unitPrice, label: '円/箇所' }
+      return { value: qty !== null && qty > 0 && amount !== null && Number.isFinite(amount) ? amount / qty : null, label: '円/箇所' }
     }
-    if (code === 'STAND') return { value: Number(project?.rebar_quantity) > 0 && Number.isFinite(amount) ? amount / Number(project.rebar_quantity) : null, label: '円/t' }
-    if (code === 'WELFARE' || code === 'EXPENSE') return { value: net > 0 && Number.isFinite(amount) ? amount / net * 100 : null, label: 'NET比 %' }
-    if (Number.isFinite(unitPrice) && unitPrice >= 0) return { value: unitPrice, label: item.unit ? `円/${item.unit}` : '単価' }
-    return { value: Number.isFinite(amount) ? amount : null, label: '金額(円)' }
+    if (code === 'STAND') return { value: hasRebarQuantity && Number(project.rebar_quantity) > 0 && amount !== null && Number.isFinite(amount) ? amount / Number(project.rebar_quantity) : null, label: '円/t' }
+    if (code === 'WELFARE' || code === 'EXPENSE') return { value: net !== null && net > 0 && amount !== null && Number.isFinite(amount) ? amount / net * 100 : null, label: 'NET比 %' }
+    if (unitPrice !== null && Number.isFinite(unitPrice) && unitPrice >= 0) return { value: unitPrice, label: item.unit ? `円/${item.unit}` : '単価' }
+    return { value: amount !== null && Number.isFinite(amount) ? amount : null, label: '金額(円)' }
   }
 
   const groups = new Map<string, any>()
