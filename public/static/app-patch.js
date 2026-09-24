@@ -174,7 +174,8 @@ loadAndRenderList = async function(reset = true) {
                   <td>${escapeHtml(e.lost_reason || '-')}</td>
                   <td class="max-w-xs truncate" title="${escapeHtml(e.remarks || '')}">${escapeHtml(e.remarks || '-')}</td>
                   <td class="whitespace-nowrap">
-                    <button class="btn btn-secondary btn-sm" data-edit="${e.id}"><i class="fas fa-edit"></i></button>
+                    <button class="btn btn-primary btn-sm" data-detail="${e.id}" title="詳細を見る"><i class="fas fa-eye"></i></button>
+                    <button class="btn btn-secondary btn-sm" data-edit="${e.id}" title="編集"><i class="fas fa-edit"></i></button>
                     ${isAdmin ? `<button class="btn btn-danger btn-sm" data-delete="${e.id}"><i class="fas fa-trash"></i></button>` : ''}
                   </td>
                 </tr>
@@ -199,6 +200,10 @@ loadAndRenderList = async function(reset = true) {
         else { listSortField = f; listSortOrder = 'asc'; }
         loadAndRenderList(true);
       });
+    });
+
+    document.querySelectorAll('[data-detail]').forEach(el => {
+      el.addEventListener('click', () => navigate('/estimates/' + el.dataset.detail + '/detail'));
     });
 
     document.querySelectorAll('[data-edit]').forEach(el => {
