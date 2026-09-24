@@ -296,6 +296,110 @@ function generateEstimateNo(): string {
   return `EST-${y}${m}${d}-${hh}${mm}${ss}-${rand}`
 }
 
+// 類似案件検索
+app.get('/api/estimates/:id/similar', authMiddleware, async (c) => {
+  const id = c.req.param('id')
+  const target = await c.env.DB.prepare('SELECT * FROM estimates WHERE id = ?').bind(id).first<any>()
+  if (!target) return c.json({ error: '見積データが見つかりません' }, 404)
+
+  const { results } = await c.env.DB.prepare('SELECT * FROM estimates WHERE id <> ? ORDER BY estimate_date DESC, id DESC LIMIT 200').bind(id).all<any>()
+  const ratioScore = (a: any, b: any, tolerance: number) => {
+    const av = Number(a), bv = Number(b)
+    if (!Number.isFinite(av) || !Number.isFinite(bv) || av <= 0 || bv <= 0) return 0
+    return Math.max(0, 1 - Math.abs(av - bv) / (Math.max(av, bv) * tolerance))
+  }
+  const candidates = (results || []).map((row: any) => {
+    let score = 0
+    let weight = 0
+    const add = (matched: number, w: number) => { score += matched * w; weight += w }
+
+    if (target.structure && row.structure) add(target.structure === row.structure ? 1 : 0, 30)
+    if (target.building_use && row.building_use) add(target.building_use === row.building_use ? 1 : 0, 15)
+
+    const tf = Number(target.above_ground_floors), rf = Number(row.above_ground_floors)
+    if (Number.isFinite(tf) && Number.isFinite(rf)) add(Math.max(0, 1 - Math.abs(tf - rf) / Math.max(3, tf || 1)), 20)
+
+    if (target.rebar_quantity && row.rebar_quantity) add(ratioScore(target.rebar_quantity, row.rebar_quantity, 0.6), 20)
+    if (target.total_floor_area && row.total_floor_area) add(ratioScore(target.total_floor_area, row.total_floor_area, 0.6), 15)
+
+    return { ...row, similarity_score: weight ? Math.round((score / weight) * 100) : 0 }
+  }).sort((a: any, b: any) => b.similarity_score - a.similarity_score).slice(0, 20)
+
+  return c.json({ target, candidates })
+})
+
+// 選択案件の見積明細比較
+app.get('/api/estimates/:id/compare', authMiddleware, async (c) => {
+  const targetId = Number(c.req.param('id'))
+  const ids = String(c.req.query('ids') || '').split(',').map(v => Number(v)).filter(v => Number.isInteger(v) && v > 0 && v !== targetId).slice(0, 5)
+  const projectIds = [targetId, ...ids]
+  if (!ids.length) return c.json({ error: '比較する案件を選択してください' }, 400)
+
+  const placeholders = projectIds.map(() => '?').join(',')
+  const { results: projectsRaw } = await c.env.DB.prepare(`SELECT * FROM estimates WHERE id IN (${placeholders})`).bind(...projectIds).all<any>()
+  const projectMap = new Map((projectsRaw || []).map((p: any) => [Number(p.id), p]))
+  const projects = projectIds.map(pid => projectMap.get(pid)).filter(Boolean)
+  if (!projectMap.has(targetId)) return c.json({ error: '基準案件が見つかりません' }, 404)
+
+  const { results: itemsRaw } = await c.env.DB.prepare(
+    `SELECT * FROM estimate_items WHERE estimate_id IN (${placeholders}) ORDER BY sort_order, id`
+  ).bind(...projectIds).all<any>()
+
+  const codeLabels: Record<string, string> = {
+    REBAR_D10:'異形鉄筋 D10', REBAR_D13:'異形鉄筋 D13', REBAR_D16:'異形鉄筋 D16', REBAR_D19:'異形鉄筋 D19',
+    REBAR_D22:'異形鉄筋 D22', REBAR_D25:'異形鉄筋 D25', REBAR_D29:'異形鉄筋 D29', REBAR_D32:'異形鉄筋 D32', REBAR_D35:'異形鉄筋 D35',
+    ANCHOR_REBAR:'定着板鉄筋', SPECIAL_REBAR:'溶接閉鎖筋・特殊鉄筋', PROCESSING:'加工費', SPACER:'スペーサー費',
+    ASSEMBLY_TRANSPORT:'組立・運搬費', GAS_D19:'ガス圧接 D19', GAS_D22:'ガス圧接 D22', GAS_D25:'ガス圧接 D25',
+    GAS_D29:'ガス圧接 D29', GAS_D32:'ガス圧接 D32', GAS_D35:'ガス圧接 D35', GAS_DAILY:'圧接常用費',
+    GAS_TEST:'圧接試験費', STAND:'梁架台費', WELFARE:'法定福利費', EXPENSE:'諸経費', OTHER:'その他'
+  }
+
+  const metricFor = (item: any, project: any) => {
+    const code = String(item.item_code || '')
+    const amount = Number(item.amount)
+    const qty = Number(item.quantity)
+    const unitPrice = Number(item.unit_price)
+    const rebarKg = Number(project?.rebar_quantity) * 1000
+    const net = Number(project?.net_amount)
+
+    if (code === 'PROCESSING' || code === 'SPACER' || code === 'ASSEMBLY_TRANSPORT') {
+      if (Number.isFinite(unitPrice) && unitPrice >= 0) return { value: unitPrice, label: '円/kg' }
+      return { value: rebarKg > 0 && Number.isFinite(amount) ? amount / rebarKg : null, label: '円/kg' }
+    }
+    if (code.startsWith('GAS_') && code !== 'GAS_DAILY' && code !== 'GAS_TEST') {
+      if (Number.isFinite(unitPrice) && unitPrice >= 0) return { value: unitPrice, label: '円/箇所' }
+      return { value: qty > 0 && Number.isFinite(amount) ? amount / qty : null, label: '円/箇所' }
+    }
+    if (code === 'STAND') return { value: Number(project?.rebar_quantity) > 0 && Number.isFinite(amount) ? amount / Number(project.rebar_quantity) : null, label: '円/t' }
+    if (code === 'WELFARE' || code === 'EXPENSE') return { value: net > 0 && Number.isFinite(amount) ? amount / net * 100 : null, label: 'NET比 %' }
+    if (Number.isFinite(unitPrice) && unitPrice >= 0) return { value: unitPrice, label: item.unit ? `円/${item.unit}` : '単価' }
+    return { value: Number.isFinite(amount) ? amount : null, label: '金額(円)' }
+  }
+
+  const groups = new Map<string, any>()
+  for (const item of (itemsRaw || [])) {
+    const code = String(item.item_code || '').trim() || `TEXT:${String(item.description || item.category || 'その他').trim()}`
+    if (!groups.has(code)) groups.set(code, { code, label: codeLabels[code] || item.description || item.category || 'その他', values: {}, metric_label: '' })
+    const row = groups.get(code)
+    const metric = metricFor(item, projectMap.get(Number(item.estimate_id)))
+    if (metric.value != null) {
+      row.values[Number(item.estimate_id)] = metric.value
+      row.metric_label = metric.label
+    }
+  }
+
+  const items = Array.from(groups.values()).map((row: any) => {
+    const targetValue = row.values[targetId]
+    const pastValues = ids.map(pid => row.values[pid]).filter((v: any) => Number.isFinite(Number(v))).map(Number)
+    const pastAverage = pastValues.length ? pastValues.reduce((a: number,b: number)=>a+b,0) / pastValues.length : null
+    const difference = targetValue != null && pastAverage != null ? Number(targetValue) - pastAverage : null
+    const differenceRate = difference != null && pastAverage !== 0 ? difference / pastAverage * 100 : null
+    return { ...row, past_average: pastAverage, difference, difference_rate: differenceRate }
+  })
+
+  return c.json({ projects, items })
+})
+
 app.post('/api/estimates', authMiddleware, async (c) => {
   const user = c.get('user')!
   const body = await c.req.json()
