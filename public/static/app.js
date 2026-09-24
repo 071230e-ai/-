@@ -1164,7 +1164,10 @@ async function renderEstimateForm(main, id) {
       <fieldset>
         <legend class="text-sm font-bold text-blue-900 border-b border-blue-900 pb-1 mb-3 w-full flex items-center justify-between gap-2">
           <span><i class="fas fa-list-ul"></i> 見積明細</span>
-          <div class="flex gap-2">
+          <div class="flex gap-2 flex-wrap justify-end">
+            <button type="button" class="btn btn-primary btn-sm" id="btn-copy-estimate-items"><i class="fas fa-copy"></i> 過去見積からコピー</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-load-item-template"><i class="fas fa-layer-group"></i> テンプレートから追加</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-save-item-template"><i class="fas fa-bookmark"></i> 現在の明細をテンプレート保存</button>
             <button type="button" class="btn btn-secondary btn-sm" id="btn-add-item-code"><i class="fas fa-plus-circle"></i> 比較項目を追加</button>
             <button type="button" class="btn btn-secondary btn-sm" id="btn-add-estimate-item"><i class="fas fa-plus"></i> 明細を追加</button>
           </div>
@@ -1339,6 +1342,63 @@ async function renderEstimateForm(main, id) {
       });
     });
   };
+
+  document.getElementById('btn-copy-estimate-items')?.addEventListener('click', async () => {
+    const search = prompt('コピー元の現場名・元請け・見積番号を入力してください。\n空欄なら最近の見積を表示します。');
+    if (search === null) return;
+    try {
+      const { data: sourceData } = await API.get('/api/estimate-item-copy-sources', { params: { search: search.trim() } });
+      const sources = sourceData.estimates || [];
+      if (!sources.length) return alert('明細が登録されている見積が見つかりませんでした。');
+      const lines = sources.slice(0, 20).map((e, i) =>
+        `${i + 1}. ${e.estimate_date || '-'} / ${e.client_name || '-'} / ${e.site_name || '-'} / ${e.item_count}項目`
+      ).join('\n');
+      const choice = prompt('コピー元を番号で選択してください。\n\n' + lines);
+      if (!choice) return;
+      const index = Number(choice) - 1;
+      if (!Number.isInteger(index) || index < 0 || index >= Math.min(sources.length, 20)) return alert('正しい番号を入力してください。');
+      const { data: detailData } = await API.get('/api/estimates/' + sources[index].id);
+      const copied = (detailData.items || []).map(({ id, estimate_id, created_at, updated_at, ...item }) => ({ ...item }));
+      if (!copied.length) return alert('コピーできる明細がありません。');
+      if (estimateItems.length && !confirm('現在入力中の明細に追加しますか？\nOK: 追加 / キャンセル: 中止')) return;
+      estimateItems = [...estimateItems, ...copied].map((item, index) => ({ ...item, sort_order: index }));
+      renderEstimateItems();
+      alert(`${copied.length}件の明細をコピーしました。元の見積データは変更されません。`);
+    } catch (err) {
+      alert(err.response?.data?.error || '過去見積の明細コピーに失敗しました');
+    }
+  });
+
+  document.getElementById('btn-load-item-template')?.addEventListener('click', async () => {
+    try {
+      const { data: templateData } = await API.get('/api/estimate-item-templates');
+      const templates = templateData.templates || [];
+      if (!templates.length) return alert('テンプレートがまだありません。\n現在の明細を入力して「現在の明細をテンプレート保存」してください。');
+      const lines = templates.map((t, i) => `${i + 1}. ${t.name}（${(t.items || []).length}項目）`).join('\n');
+      const choice = prompt('追加するテンプレートを番号で選択してください。\n\n' + lines);
+      if (!choice) return;
+      const index = Number(choice) - 1;
+      if (!Number.isInteger(index) || index < 0 || index >= templates.length) return alert('正しい番号を入力してください。');
+      const added = (templates[index].items || []).map(item => ({ ...item }));
+      estimateItems = [...estimateItems, ...added].map((item, index) => ({ ...item, sort_order: index }));
+      renderEstimateItems();
+      alert(`${templates[index].name} を追加しました。`);
+    } catch (err) {
+      alert(err.response?.data?.error || 'テンプレートの読み込みに失敗しました');
+    }
+  });
+
+  document.getElementById('btn-save-item-template')?.addEventListener('click', async () => {
+    if (!estimateItems.length) return alert('保存する見積明細がありません。');
+    const name = prompt('テンプレート名を入力してください。\n例：RCマンション・材工');
+    if (!name || !name.trim()) return;
+    try {
+      await API.post('/api/estimate-item-templates', { name: name.trim(), items: estimateItems });
+      alert('テンプレートを保存しました。');
+    } catch (err) {
+      alert(err.response?.data?.error || 'テンプレートの保存に失敗しました');
+    }
+  });
 
   document.getElementById('btn-add-item-code')?.addEventListener('click', async () => {
     const label = prompt('追加する比較項目名を入力してください。\n例：鉄筋運搬費、クレーン費、特殊加工費');
