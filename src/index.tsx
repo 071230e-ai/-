@@ -176,6 +176,10 @@ function buildEstimateFilters(q: Record<string, string>) {
   if (q.price_max) { conditions.push('unit_price <= ?'); params.push(Number(q.price_max)) }
   if (q.quantity_min) { conditions.push('rebar_quantity >= ?'); params.push(Number(q.quantity_min)) }
   if (q.quantity_max) { conditions.push('rebar_quantity <= ?'); params.push(Number(q.quantity_max)) }
+  if (q.client_ordered === '1' || q.client_ordered === '0') {
+    conditions.push('client_ordered = ?')
+    params.push(Number(q.client_ordered))
+  }
 
   return {
     where: conditions.length ? 'WHERE ' + conditions.join(' AND ') : '',
@@ -249,8 +253,8 @@ app.post('/api/estimates', authMiddleware, async (c) => {
     estimate_no, estimate_date, client_name, site_name, site_location, structure, building_use,
     rebar_quantity, estimate_amount, unit_price, material_type, result, lost_reason, order_date, remarks,
     competitor, expected_actual_unit_price, profit_estimate, construction_period, construction_start_date,
-    processing_start_date, difficulty, site_manager, re_estimate, client_contact_name, client_contact_info, created_by
-  ) VALUES (?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?,?, ?)`
+    processing_start_date, difficulty, site_manager, re_estimate, client_ordered, client_contact_name, client_contact_info, created_by
+  ) VALUES (?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?,?,?, ?)`
 
   try {
     const result = await c.env.DB.prepare(sql).bind(
@@ -278,6 +282,7 @@ app.post('/api/estimates', authMiddleware, async (c) => {
       body.difficulty || null,
       body.site_manager || null,
       body.re_estimate ? 1 : 0,
+      body.client_ordered ? 1 : 0,
       body.client_contact_name || null,
       body.client_contact_info || null,
       user.id
@@ -311,7 +316,7 @@ app.put('/api/estimates/:id', authMiddleware, async (c) => {
     estimate_no=?, estimate_date=?, client_name=?, site_name=?, site_location=?, structure=?, building_use=?,
     rebar_quantity=?, estimate_amount=?, unit_price=?, material_type=?, result=?, lost_reason=?, order_date=?, remarks=?,
     competitor=?, expected_actual_unit_price=?, profit_estimate=?, construction_period=?, construction_start_date=?,
-    processing_start_date=?, difficulty=?, site_manager=?, re_estimate=?, client_contact_name=?, client_contact_info=?,
+    processing_start_date=?, difficulty=?, site_manager=?, re_estimate=?, client_ordered=?, client_contact_name=?, client_contact_info=?,
     updated_at=CURRENT_TIMESTAMP
     WHERE id=?`
 
@@ -341,6 +346,7 @@ app.put('/api/estimates/:id', authMiddleware, async (c) => {
       body.difficulty || null,
       body.site_manager || null,
       body.re_estimate ? 1 : 0,
+      body.client_ordered ? 1 : 0,
       body.client_contact_name || null,
       body.client_contact_info || null,
       id
