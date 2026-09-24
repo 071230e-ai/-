@@ -106,8 +106,12 @@ async function render() {
   if (path === '/' || path === '/dashboard') return renderDashboard(main);
   if (path === '/estimates') return renderEstimateList(main);
   if (path === '/estimates/new') return renderEstimateForm(main, null);
-  if (path.startsWith('/estimates/')) {
-    const id = path.split('/').pop();
+  if (/^\/estimates\/\d+\/detail$/.test(path)) {
+    const id = path.split('/')[2];
+    return renderEstimateDetail(main, id);
+  }
+  if (/^\/estimates\/\d+$/.test(path)) {
+    const id = path.split('/')[2];
     return renderEstimateForm(main, id);
   }
   if (path === '/stats/clients') return renderStats(main, 'clients');
@@ -687,7 +691,8 @@ async function loadAndRenderList() {
                   <td>${escapeHtml(e.lost_reason || '-')}</td>
                   <td class="max-w-xs truncate" title="${escapeHtml(e.remarks || '')}">${escapeHtml(e.remarks || '-')}</td>
                   <td class="whitespace-nowrap">
-                    <button class="btn btn-secondary btn-sm" data-edit="${e.id}"><i class="fas fa-edit"></i></button>
+                    <button class="btn btn-primary btn-sm" data-detail="${e.id}" title="詳細を見る"><i class="fas fa-eye"></i></button>
+                    <button class="btn btn-secondary btn-sm" data-edit="${e.id}" title="編集"><i class="fas fa-edit"></i></button>
                     ${isAdmin ? `<button class="btn btn-danger btn-sm" data-delete="${e.id}"><i class="fas fa-trash"></i></button>` : ''}
                   </td>
                 </tr>
@@ -707,6 +712,10 @@ async function loadAndRenderList() {
         loadAndRenderList();
       });
     });
+    // 詳細
+    document.querySelectorAll('[data-detail]').forEach(el => {
+      el.addEventListener('click', () => navigate('/estimates/' + el.dataset.detail + '/detail'));
+    });
     // 編集
     document.querySelectorAll('[data-edit]').forEach(el => {
       el.addEventListener('click', () => navigate('/estimates/' + el.dataset.edit));
@@ -725,6 +734,154 @@ async function loadAndRenderList() {
     });
   } catch (err) {
     document.getElementById('list-content').innerHTML = `<div class="text-red-600 p-4">${err.message}</div>`;
+  }
+}
+
+// ========== 類似案件・比較 (詳細/編集 共通) ==========
+async function showSimilarEstimates(id, panel) {
+  if (!panel) return;
+  panel.classList.remove('hidden');
+  panel.innerHTML = '<div class="bg-white border rounded-lg p-4 text-center text-gray-500"><i class="fas fa-spinner fa-spin"></i> 類似案件を検索中...</div>';
+  try {
+    const { data: similarData } = await API.get('/api/estimates/' + id + '/similar');
+    const candidates = similarData.candidates || [];
+    panel.innerHTML = `
+      <div class="bg-white border rounded-lg p-4">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <div>
+            <div class="font-bold text-blue-900"><i class="fas fa-code-compare"></i> 類似案件</div>
+            <div class="text-xs text-gray-500">構造・用途・階数・鉄筋数量・延床面積を基準に近い順で表示します。最大5件選択して明細比較できます。</div>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" data-compare-selected>選択した案件と比較</button>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>選択</th><th>類似度</th><th>現場名</th><th>構造</th><th>用途</th><th>階数</th><th>数量(t)</th><th>延床(㎡)</th><th>NET単価</th></tr></thead>
+            <tbody>
+              ${candidates.map((c, i) => `<tr>
+                <td><input type="checkbox" data-compare-id="${c.id}" ${i < 3 ? 'checked' : ''}></td>
+                <td>${Number(c.similarity_score || 0).toFixed(0)}%</td>
+                <td>${escapeHtml(c.site_name || '')}</td>
+                <td>${escapeHtml(c.structure || '-')}</td>
+                <td>${escapeHtml(c.building_use || '-')}</td>
+                <td>${c.above_ground_floors ?? '-'}F / B${c.basement_floors ?? 0}</td>
+                <td class="num-cell">${num(c.rebar_quantity)}</td>
+                <td class="num-cell">${num0(c.total_floor_area)}</td>
+                <td class="num-cell">${num(c.unit_price, 1)}円/kg</td>
+              </tr>`).join('') || '<tr><td colspan="9" class="text-center text-gray-400 py-4">比較できる過去案件がありません</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+        <div data-comparison-result class="mt-4"></div>
+      </div>`;
+
+    panel.querySelector('[data-compare-selected]')?.addEventListener('click', async () => {
+      const ids = Array.from(panel.querySelectorAll('[data-compare-id]:checked')).map(el => el.dataset.compareId).slice(0, 5);
+      if (!ids.length) { alert('比較する案件を1件以上選択してください'); return; }
+      const resultEl = panel.querySelector('[data-comparison-result]');
+      resultEl.innerHTML = '<div class="text-center text-gray-500"><i class="fas fa-spinner fa-spin"></i> 比較中...</div>';
+      const { data: comparison } = await API.get('/api/estimates/' + id + '/compare', { params: { ids: ids.join(',') } });
+      const projects = comparison.projects || [];
+      const rows = comparison.items || [];
+      resultEl.innerHTML = `
+        <div class="font-semibold mb-2">見積明細比較</div>
+        <div class="table-scroll">
+          <table class="data-table min-w-[1000px]">
+            <thead><tr><th>比較項目</th><th>指標</th>${projects.map(p => `<th>${escapeHtml(p.site_name || p.estimate_no)}</th>`).join('')}<th>過去平均</th><th>今回との差</th><th>差率</th></tr></thead>
+            <tbody>
+              ${rows.map(r => `<tr>
+                <td>${escapeHtml(r.label)}</td>
+                <td>${escapeHtml(r.metric_label)}</td>
+                ${projects.map(p => `<td class="num-cell">${r.values[p.id] == null ? '-' : Number(r.values[p.id]).toLocaleString(undefined,{maximumFractionDigits:2})}</td>`).join('')}
+                <td class="num-cell">${r.past_average == null ? '-' : Number(r.past_average).toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+                <td class="num-cell">${r.difference == null ? '-' : Number(r.difference).toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+                <td class="num-cell">${r.difference_rate == null ? '-' : Number(r.difference_rate).toFixed(1) + '%'}</td>
+              </tr>`).join('') || '<tr><td colspan="8" class="text-center text-gray-400 py-4">比較可能な共通明細がありません</td></tr>'}
+            </tbody>
+          </table>
+        </div>`;
+    });
+  } catch (err) {
+    panel.innerHTML = `<div class="bg-white border rounded-lg p-4 text-red-600">${escapeHtml(err.response?.data?.error || '類似案件の取得に失敗しました')}</div>`;
+  }
+}
+
+// ========== 見積詳細 ==========
+async function renderEstimateDetail(main, id) {
+  try {
+    const { data } = await API.get('/api/estimates/' + id);
+    const e = data.estimate || {};
+    const items = data.items || [];
+    const clientOrderLabel = Number(e.client_ordered) === 1 ? '受注済' : Number(e.client_ordered) === 2 ? '失注' : '未受注';
+
+    main.innerHTML = `
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <h1 class="text-2xl font-bold text-gray-800"><i class="fas fa-file-lines text-blue-900"></i> 見積詳細</h1>
+        <div class="flex gap-2">
+          <button type="button" class="btn btn-primary" id="btn-detail-similar"><i class="fas fa-code-compare"></i> 類似案件を見る</button>
+          <button type="button" class="btn btn-secondary" data-nav="/estimates/${id}"><i class="fas fa-edit"></i> 編集</button>
+          <button type="button" class="btn btn-secondary" data-nav="/estimates"><i class="fas fa-arrow-left"></i> 一覧に戻る</button>
+        </div>
+      </div>
+      <div id="detail-similar-panel" class="mb-4 hidden"></div>
+
+      <div class="bg-white border rounded-lg p-4 md:p-6 space-y-6">
+        <section>
+          <h2 class="text-sm font-bold text-blue-900 border-b border-blue-900 pb-1 mb-3"><i class="fas fa-info-circle"></i> 基本情報</h2>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+            <div><div class="text-gray-500">見積日</div><div class="font-medium">${escapeHtml(e.estimate_date || '-')}</div></div>
+            <div><div class="text-gray-500">元請け受注状況</div><div class="font-medium">${clientOrderLabel}</div></div>
+            <div><div class="text-gray-500">元請け会社名</div><div class="font-medium">${escapeHtml(e.client_name || '-')}</div></div>
+            <div><div class="text-gray-500">現場名</div><div class="font-medium">${escapeHtml(e.site_name || '-')}</div></div>
+            <div><div class="text-gray-500">工事場所</div><div class="font-medium">${escapeHtml(e.site_location || '-')}</div></div>
+            <div><div class="text-gray-500">構造</div><div class="font-medium">${escapeHtml(e.structure || '-')}</div></div>
+            <div><div class="text-gray-500">建物用途</div><div class="font-medium">${escapeHtml(e.building_use || '-')}</div></div>
+            <div><div class="text-gray-500">地上/地下階数</div><div class="font-medium">${e.above_ground_floors ?? '-'}F / B${e.basement_floors ?? 0}</div></div>
+            <div><div class="text-gray-500">延床面積</div><div class="font-medium">${e.total_floor_area == null ? '-' : Number(e.total_floor_area).toLocaleString() + ' ㎡'}</div></div>
+            <div><div class="text-gray-500">鉄筋数量</div><div class="font-medium">${e.rebar_quantity == null ? '-' : num(e.rebar_quantity) + ' t'}</div></div>
+            <div><div class="text-gray-500">見積金額</div><div class="font-medium">${yen(e.estimate_amount)}</div></div>
+            <div><div class="text-gray-500">NET金額</div><div class="font-medium">${yen(e.net_amount)}</div></div>
+            <div><div class="text-gray-500">NET単価</div><div class="font-medium">${e.unit_price == null ? '-' : num(e.unit_price, 2) + ' 円/kg'}</div></div>
+            <div><div class="text-gray-500">材料区分</div><div class="font-medium">${escapeHtml(e.material_type || '-')}</div></div>
+            <div><div class="text-gray-500">着工予定日</div><div class="font-medium">${escapeHtml(e.construction_start_date || '-')}</div></div>
+            <div><div class="text-gray-500">結果</div><div class="font-medium">${resultBadge(e.result)}</div></div>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="text-sm font-bold text-blue-900 border-b border-blue-900 pb-1 mb-3"><i class="fas fa-list-ul"></i> 見積明細</h2>
+          <div class="table-scroll">
+            <table class="data-table min-w-[1100px]">
+              <thead><tr><th>比較項目</th><th>分類</th><th>摘要</th><th>規格</th><th>数量</th><th>単位</th><th>単価</th><th>金額</th><th>備考</th></tr></thead>
+              <tbody>
+                ${items.map(item => `<tr>
+                  <td>${escapeHtml(item.item_code || '-')}</td>
+                  <td>${escapeHtml(item.category || '-')}</td>
+                  <td>${escapeHtml(item.description || '-')}</td>
+                  <td>${escapeHtml(item.specification || '-')}</td>
+                  <td class="num-cell">${item.quantity == null ? '-' : Number(item.quantity).toLocaleString()}</td>
+                  <td>${escapeHtml(item.unit || '-')}</td>
+                  <td class="num-cell">${item.unit_price == null ? '-' : Number(item.unit_price).toLocaleString()}</td>
+                  <td class="num-cell">${yen(item.amount)}</td>
+                  <td>${escapeHtml(item.remarks || '-')}</td>
+                </tr>`).join('') || '<tr><td colspan="9" class="text-center text-gray-400 py-6">見積明細はありません</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="text-sm font-bold text-blue-900 border-b border-blue-900 pb-1 mb-3"><i class="fas fa-comment"></i> 備考</h2>
+          <div class="text-sm whitespace-pre-wrap">${escapeHtml(e.remarks || '-')}</div>
+        </section>
+      </div>`;
+
+    attachLayoutEvents();
+    document.getElementById('btn-detail-similar')?.addEventListener('click', () => {
+      showSimilarEstimates(id, document.getElementById('detail-similar-panel'));
+    });
+  } catch (err) {
+    main.innerHTML = `<div class="text-red-600 p-4">${escapeHtml(err.response?.data?.error || '見積詳細の取得に失敗しました')}</div>`;
   }
 }
 
@@ -1010,72 +1167,8 @@ async function renderEstimateForm(main, id) {
   renderEstimateItems();
 
   // 類似案件検索・比較
-  document.getElementById('btn-similar-estimates')?.addEventListener('click', async () => {
-    const panel = document.getElementById('similar-estimates-panel');
-    panel.classList.remove('hidden');
-    panel.innerHTML = '<div class="bg-white border rounded-lg p-4 text-center text-gray-500"><i class="fas fa-spinner fa-spin"></i> 類似案件を検索中...</div>';
-    try {
-      const { data: similarData } = await API.get('/api/estimates/' + id + '/similar');
-      const candidates = similarData.candidates || [];
-      panel.innerHTML = `
-        <div class="bg-white border rounded-lg p-4">
-          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-            <div>
-              <div class="font-bold text-blue-900"><i class="fas fa-code-compare"></i> 類似案件</div>
-              <div class="text-xs text-gray-500">構造・用途・階数・鉄筋数量・延床面積を基準に近い順で表示します。最大5件選択して明細比較できます。</div>
-            </div>
-            <button type="button" class="btn btn-primary btn-sm" id="btn-compare-selected">選択した案件と比較</button>
-          </div>
-          <div class="table-scroll">
-            <table class="data-table">
-              <thead><tr><th>選択</th><th>類似度</th><th>現場名</th><th>構造</th><th>用途</th><th>階数</th><th>数量(t)</th><th>延床(㎡)</th><th>NET単価</th></tr></thead>
-              <tbody>
-                ${candidates.map((c, i) => `<tr>
-                  <td><input type="checkbox" data-compare-id="${c.id}" ${i < 3 ? 'checked' : ''}></td>
-                  <td>${Number(c.similarity_score || 0).toFixed(0)}%</td>
-                  <td>${escapeHtml(c.site_name || '')}</td>
-                  <td>${escapeHtml(c.structure || '-')}</td>
-                  <td>${escapeHtml(c.building_use || '-')}</td>
-                  <td>${c.above_ground_floors ?? '-'}F / B${c.basement_floors ?? 0}</td>
-                  <td class="num-cell">${num(c.rebar_quantity)}</td>
-                  <td class="num-cell">${num0(c.total_floor_area)}</td>
-                  <td class="num-cell">${num(c.unit_price, 1)}円/kg</td>
-                </tr>`).join('') || '<tr><td colspan="9" class="text-center text-gray-400 py-4">比較できる過去案件がありません</td></tr>'}
-              </tbody>
-            </table>
-          </div>
-          <div id="estimate-comparison-result" class="mt-4"></div>
-        </div>`;
-
-      document.getElementById('btn-compare-selected')?.addEventListener('click', async () => {
-        const ids = Array.from(panel.querySelectorAll('[data-compare-id]:checked')).map(el => el.dataset.compareId).slice(0, 5);
-        if (!ids.length) { alert('比較する案件を1件以上選択してください'); return; }
-        const resultEl = document.getElementById('estimate-comparison-result');
-        resultEl.innerHTML = '<div class="text-center text-gray-500"><i class="fas fa-spinner fa-spin"></i> 比較中...</div>';
-        const { data: comparison } = await API.get('/api/estimates/' + id + '/compare', { params: { ids: ids.join(',') } });
-        const projects = comparison.projects || [];
-        const rows = comparison.items || [];
-        resultEl.innerHTML = `
-          <div class="font-semibold mb-2">見積明細比較</div>
-          <div class="table-scroll">
-            <table class="data-table min-w-[1000px]">
-              <thead><tr><th>比較項目</th><th>指標</th>${projects.map(p => `<th>${escapeHtml(p.site_name || p.estimate_no)}</th>`).join('')}<th>過去平均</th><th>今回との差</th><th>差率</th></tr></thead>
-              <tbody>
-                ${rows.map(r => `<tr>
-                  <td>${escapeHtml(r.label)}</td>
-                  <td>${escapeHtml(r.metric_label)}</td>
-                  ${projects.map(p => `<td class="num-cell">${r.values[p.id] == null ? '-' : Number(r.values[p.id]).toLocaleString(undefined,{maximumFractionDigits:2})}</td>`).join('')}
-                  <td class="num-cell">${r.past_average == null ? '-' : Number(r.past_average).toLocaleString(undefined,{maximumFractionDigits:2})}</td>
-                  <td class="num-cell">${r.difference == null ? '-' : Number(r.difference).toLocaleString(undefined,{maximumFractionDigits:2})}</td>
-                  <td class="num-cell">${r.difference_rate == null ? '-' : Number(r.difference_rate).toFixed(1) + '%'}</td>
-                </tr>`).join('') || '<tr><td colspan="8" class="text-center text-gray-400 py-4">比較可能な共通明細がありません</td></tr>'}
-              </tbody>
-            </table>
-          </div>`;
-      });
-    } catch (err) {
-      panel.innerHTML = `<div class="bg-white border rounded-lg p-4 text-red-600">${escapeHtml(err.response?.data?.error || '類似案件の取得に失敗しました')}</div>`;
-    }
+  document.getElementById('btn-similar-estimates')?.addEventListener('click', () => {
+    showSimilarEstimates(id, document.getElementById('similar-estimates-panel'));
   });
 
   // 自動計算: 単価 = NET金額 ÷ 数量 ÷ 1000
