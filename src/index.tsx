@@ -278,6 +278,54 @@ app.get('/api/estimates', authMiddleware, async (c) => {
   })
 })
 
+// 条件指定による類似案件検索
+app.get('/api/similar-search', authMiddleware, async (c) => {
+  const q = c.req.query()
+  const hasCondition = ['structure','building_use','above_ground_floors','basement_floors','rebar_quantity','total_floor_area','material_type','client_ordered']
+    .some(key => String(q[key] || '').trim() !== '')
+  if (!hasCondition) return c.json({ error: '検索条件を1つ以上指定してください' }, 400)
+
+  const { results } = await c.env.DB.prepare(
+    'SELECT * FROM estimates ORDER BY estimate_date DESC, id DESC LIMIT 500'
+  ).all<any>()
+
+  const ratioScore = (targetValue: any, rowValue: any, tolerance: number) => {
+    if (targetValue === '' || targetValue === null || targetValue === undefined || rowValue === '' || rowValue === null || rowValue === undefined) return null
+    const a = Number(targetValue), b = Number(rowValue)
+    if (!Number.isFinite(a) || !Number.isFinite(b) || a < 0 || b < 0) return null
+    if (a === 0 && b === 0) return 1
+    if (a <= 0 || b <= 0) return 0
+    return Math.max(0, 1 - Math.abs(a - b) / (Math.max(a, b) * tolerance))
+  }
+
+  const candidates = (results || []).map((row: any) => {
+    let score = 0
+    let weight = 0
+    const add = (value: number | null, w: number) => {
+      if (value === null) return
+      score += value * w
+      weight += w
+    }
+
+    if (q.structure) add(row.structure && String(row.structure).trim() === String(q.structure).trim() ? 1 : 0, 30)
+    if (q.building_use) add(row.building_use && String(row.building_use).trim() === String(q.building_use).trim() ? 1 : 0, 15)
+    if (q.material_type) add(row.material_type === q.material_type ? 1 : 0, 10)
+    if (q.client_ordered !== undefined && q.client_ordered !== '') add(Number(row.client_ordered) === Number(q.client_ordered) ? 1 : 0, 5)
+
+    add(ratioScore(q.above_ground_floors, row.above_ground_floors, 0.5), 15)
+    add(ratioScore(q.basement_floors, row.basement_floors, 1.0), 5)
+    add(ratioScore(q.rebar_quantity, row.rebar_quantity, 0.6), 15)
+    add(ratioScore(q.total_floor_area, row.total_floor_area, 0.6), 10)
+
+    return { ...row, similarity_score: weight ? Math.round((score / weight) * 100) : 0 }
+  })
+    .filter((row: any) => row.similarity_score > 0)
+    .sort((a: any, b: any) => b.similarity_score - a.similarity_score || String(b.estimate_date || '').localeCompare(String(a.estimate_date || '')))
+    .slice(0, 50)
+
+  return c.json({ candidates })
+})
+
 app.get('/api/estimates/:id', authMiddleware, async (c) => {
   const id = c.req.param('id')
   const row = await c.env.DB.prepare('SELECT * FROM estimates WHERE id = ?').bind(id).first()
@@ -677,6 +725,7 @@ app.get('/', renderApp)
 app.get('/login', renderApp)
 app.get('/dashboard', renderApp)
 app.get('/estimates', renderApp)
+app.get('/similar-search', renderApp)
 app.get('/estimates/new', renderApp)
 app.get('/estimates/:id/detail', renderApp)
 app.get('/estimates/:id', renderApp)
