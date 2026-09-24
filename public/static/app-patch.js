@@ -44,6 +44,22 @@ filterPanel = function() {
         <input type="text" class="form-input" data-filter="building_use" value="${escapeHtml(f.building_use || '')}" placeholder="例：マンション、倉庫、工場" />
       </div>
       <div>
+        <label class="form-label text-xs">地上階数 下限</label>
+        <input type="number" min="0" step="1" class="form-input" data-filter="floors_min" value="${f.floors_min || ''}" />
+      </div>
+      <div>
+        <label class="form-label text-xs">地上階数 上限</label>
+        <input type="number" min="0" step="1" class="form-input" data-filter="floors_max" value="${f.floors_max || ''}" />
+      </div>
+      <div>
+        <label class="form-label text-xs">延床面積 下限(㎡)</label>
+        <input type="number" min="0" step="1" class="form-input" data-filter="area_min" value="${f.area_min || ''}" />
+      </div>
+      <div>
+        <label class="form-label text-xs">延床面積 上限(㎡)</label>
+        <input type="number" min="0" step="1" class="form-input" data-filter="area_max" value="${f.area_max || ''}" />
+      </div>
+      <div>
         <label class="form-label text-xs">材料区分</label>
         <select class="form-select" data-filter="material_type">
           <option value="">全て</option>
