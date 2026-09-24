@@ -739,6 +739,7 @@ async function renderEstimateForm(main, id) {
     try {
       const res = await API.get('/api/estimates/' + id);
       data = res.data.estimate;
+      data.items = res.data.items || [];
     } catch (err) {
       main.innerHTML = `<div class="text-red-600 p-4">${err.message}</div>`;
       return;
@@ -815,6 +816,36 @@ async function renderEstimateForm(main, id) {
         </div>
       </fieldset>
 
+      <!-- 見積明細 -->
+      <fieldset>
+        <legend class="text-sm font-bold text-blue-900 border-b border-blue-900 pb-1 mb-3 w-full flex items-center justify-between gap-2">
+          <span><i class="fas fa-list-ul"></i> 見積明細</span>
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-add-estimate-item"><i class="fas fa-plus"></i> 明細を追加</button>
+        </legend>
+        <p class="text-xs text-gray-500 mb-3">数量×単価で金額を自動計算します。梁架台費・諸経費などは金額欄へ直接入力できます。NET金額とは連動せず、NET金額は上の欄へ手入力してください。</p>
+        <div class="table-scroll border rounded-lg">
+          <table class="data-table min-w-[1200px]">
+            <thead>
+              <tr>
+                <th>分類</th>
+                <th>摘要</th>
+                <th>規格</th>
+                <th class="num-cell">数量</th>
+                <th>単位</th>
+                <th class="num-cell">単価</th>
+                <th class="num-cell">金額</th>
+                <th>備考</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="estimate-items-body"></tbody>
+          </table>
+        </div>
+        <div class="mt-2 text-right text-sm font-semibold text-gray-700">
+          明細合計: <span id="estimate-items-total">¥0</span>
+        </div>
+      </fieldset>
+
       <!-- 工期・スケジュール -->
       <fieldset>
         <legend class="text-sm font-bold text-blue-900 border-b border-blue-900 pb-1 mb-3 w-full"><i class="fas fa-clock"></i> 工期・スケジュール</legend>
@@ -864,6 +895,92 @@ async function renderEstimateForm(main, id) {
   `;
   attachLayoutEvents();
 
+  // 見積明細
+  const ITEM_CATEGORIES = ['鉄筋材料', '加工費', 'スペーサー費', '組立・運搬費', '圧接費', '架台費', '法定福利費', '諸経費', 'その他'];
+  let estimateItems = Array.isArray(data.items) ? data.items.map(item => ({ ...item })) : [];
+
+  const itemCategoryOptions = (selected) =>
+    ITEM_CATEGORIES.map(v => `<option value="${v}" ${selected === v ? 'selected' : ''}>${v}</option>`).join('');
+
+  const renderEstimateItems = () => {
+    const tbody = document.getElementById('estimate-items-body');
+    if (!tbody) return;
+    tbody.innerHTML = estimateItems.map((item, index) => `
+      <tr data-item-index="${index}">
+        <td>
+          <select class="form-select text-sm" data-item-field="category">
+            <option value="">選択</option>
+            ${itemCategoryOptions(item.category || '')}
+          </select>
+        </td>
+        <td><input type="text" class="form-input text-sm" data-item-field="description" value="${escapeHtml(item.description || '')}" placeholder="例: 異形鉄筋 D13" /></td>
+        <td><input type="text" class="form-input text-sm" data-item-field="specification" value="${escapeHtml(item.specification || '')}" placeholder="例: SD295" /></td>
+        <td><input type="number" step="0.001" class="form-input text-sm text-right" data-item-field="quantity" value="${item.quantity ?? ''}" /></td>
+        <td><input type="text" class="form-input text-sm" data-item-field="unit" value="${escapeHtml(item.unit || '')}" placeholder="kg・箇所・本・式・%" /></td>
+        <td><input type="number" step="0.01" class="form-input text-sm text-right" data-item-field="unit_price" value="${item.unit_price ?? ''}" /></td>
+        <td><input type="number" step="1" class="form-input text-sm text-right" data-item-field="amount" value="${item.amount ?? ''}" /></td>
+        <td><input type="text" class="form-input text-sm" data-item-field="remarks" value="${escapeHtml(item.remarks || '')}" placeholder="例: 支給材" /></td>
+        <td><button type="button" class="btn btn-danger btn-sm" data-remove-item="${index}"><i class="fas fa-trash"></i></button></td>
+      </tr>
+    `).join('') || '<tr><td colspan="9" class="text-center text-gray-400 py-4">明細はまだありません。「明細を追加」から入力してください。</td></tr>';
+
+    const total = estimateItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+    const totalEl = document.getElementById('estimate-items-total');
+    if (totalEl) totalEl.textContent = yen(total);
+
+    tbody.querySelectorAll('[data-item-field]').forEach(el => {
+      el.addEventListener('input', () => {
+        const row = el.closest('[data-item-index]');
+        if (!row) return;
+        const index = Number(row.dataset.itemIndex);
+        const field = el.dataset.itemField;
+        estimateItems[index][field] = el.value;
+
+        if (field === 'quantity' || field === 'unit_price') {
+          const q = Number(estimateItems[index].quantity);
+          const p = Number(estimateItems[index].unit_price);
+          if (Number.isFinite(q) && q >= 0 && Number.isFinite(p) && p >= 0 && estimateItems[index].quantity !== '' && estimateItems[index].unit_price !== '') {
+            estimateItems[index].amount = Math.round(q * p);
+            const amountEl = row.querySelector('[data-item-field="amount"]');
+            if (amountEl) amountEl.value = estimateItems[index].amount;
+          }
+        }
+
+        const totalNow = estimateItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+        const totalElNow = document.getElementById('estimate-items-total');
+        if (totalElNow) totalElNow.textContent = yen(totalNow);
+      });
+      el.addEventListener('change', () => {
+        const row = el.closest('[data-item-index]');
+        if (!row) return;
+        const index = Number(row.dataset.itemIndex);
+        estimateItems[index][el.dataset.itemField] = el.value;
+      });
+    });
+
+    tbody.querySelectorAll('[data-remove-item]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        estimateItems.splice(Number(btn.dataset.removeItem), 1);
+        renderEstimateItems();
+      });
+    });
+  };
+
+  document.getElementById('btn-add-estimate-item')?.addEventListener('click', () => {
+    estimateItems.push({
+      category: '',
+      description: '',
+      specification: '',
+      quantity: '',
+      unit: 'kg',
+      unit_price: '',
+      amount: '',
+      remarks: '',
+    });
+    renderEstimateItems();
+  });
+  renderEstimateItems();
+
   // 自動計算: 単価 = NET金額 ÷ 数量 ÷ 1000
   const qEl = document.getElementById('f_quantity');
   const netEl = document.getElementById('f_net_amount');
@@ -895,6 +1012,19 @@ async function renderEstimateForm(main, id) {
     const body = Object.fromEntries(fd.entries());
     body.re_estimate = fd.get('re_estimate') ? 1 : 0;
     body.client_ordered = Number(fd.get('client_ordered') || 0);
+    body.items = estimateItems
+      .map((item, index) => ({
+        category: String(item.category || '').trim(),
+        description: String(item.description || '').trim(),
+        specification: String(item.specification || '').trim(),
+        quantity: item.quantity === '' || item.quantity == null ? null : Number(item.quantity),
+        unit: String(item.unit || '').trim(),
+        unit_price: item.unit_price === '' || item.unit_price == null ? null : Number(item.unit_price),
+        amount: item.amount === '' || item.amount == null ? null : Number(item.amount),
+        remarks: String(item.remarks || '').trim(),
+        sort_order: index,
+      }))
+      .filter(item => item.category || item.description || item.specification || item.quantity != null || item.unit_price != null || item.amount != null || item.remarks);
     try {
       if (isEdit) await API.put('/api/estimates/' + id, body);
       else await API.post('/api/estimates', body);
