@@ -229,6 +229,10 @@ function buildEstimateFilters(q: Record<string, string>) {
   if (q.price_max) { conditions.push('unit_price <= ?'); params.push(Number(q.price_max)) }
   if (q.quantity_min) { conditions.push('rebar_quantity >= ?'); params.push(Number(q.quantity_min)) }
   if (q.quantity_max) { conditions.push('rebar_quantity <= ?'); params.push(Number(q.quantity_max)) }
+  if (q.floors_min) { conditions.push('above_ground_floors >= ?'); params.push(Number(q.floors_min)) }
+  if (q.floors_max) { conditions.push('above_ground_floors <= ?'); params.push(Number(q.floors_max)) }
+  if (q.area_min) { conditions.push('total_floor_area >= ?'); params.push(Number(q.area_min)) }
+  if (q.area_max) { conditions.push('total_floor_area <= ?'); params.push(Number(q.area_max)) }
   if (q.client_ordered === '1' || q.client_ordered === '2' || q.client_ordered === '0') {
     conditions.push('client_ordered = ?')
     params.push(Number(q.client_ordered))
