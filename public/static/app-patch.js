@@ -90,6 +90,15 @@ filterPanel = function() {
         <input type="number" min="0" step="0.01" class="form-input" data-filter="quantity_max" value="${f.quantity_max || ''}" />
       </div>
       <div>
+        <label class="form-label text-xs">元請け受注状況</label>
+        <select class="form-select" data-filter="client_ordered">
+          <option value="">全て</option>
+          <option value="1" ${String(f.client_ordered || '') === '1' ? 'selected' : ''}>受注済</option>
+          <option value="2" ${String(f.client_ordered || '') === '2' ? 'selected' : ''}>失注</option>
+          <option value="0" ${String(f.client_ordered || '') === '0' ? 'selected' : ''}>未受注</option>
+        </select>
+      </div>
+      <div>
         <label class="form-label text-xs">失注理由</label>
         <select class="form-select" data-filter="lost_reason">
           <option value="">全て</option>
