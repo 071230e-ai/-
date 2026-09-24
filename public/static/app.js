@@ -752,8 +752,12 @@ async function renderEstimateForm(main, id) {
         <i class="fas fa-${isEdit ? 'edit' : 'plus'} text-blue-900"></i>
         ${isEdit ? '見積データ編集' : '新規見積登録'}
       </h1>
-      <button class="btn btn-secondary" data-nav="/estimates"><i class="fas fa-arrow-left"></i> 一覧に戻る</button>
+      <div class="flex gap-2">
+        ${isEdit ? `<button type="button" class="btn btn-primary" id="btn-similar-estimates"><i class="fas fa-code-compare"></i> 類似案件を見る</button>` : ''}
+        <button class="btn btn-secondary" data-nav="/estimates"><i class="fas fa-arrow-left"></i> 一覧に戻る</button>
+      </div>
     </div>
+    ${isEdit ? '<div id="similar-estimates-panel" class="mb-4 hidden"></div>' : ''}
     <form id="estimate-form" class="bg-white border rounded-lg p-4 md:p-6 space-y-6">
       <!-- 基本情報 -->
       <fieldset>
@@ -784,7 +788,7 @@ async function renderEstimateForm(main, id) {
       <!-- 建物情報 -->
       <fieldset>
         <legend class="text-sm font-bold text-blue-900 border-b border-blue-900 pb-1 mb-3 w-full"><i class="fas fa-building"></i> 建物情報</legend>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
           <div>
             <label class="form-label">建物の構造</label>
             <input type="text" name="structure" class="form-input" value="${escapeHtml(data.structure || '')}" list="structure-list" placeholder="RC造、S造など (自由入力可)" />
@@ -795,6 +799,9 @@ async function renderEstimateForm(main, id) {
             <input type="text" name="building_use" class="form-input" value="${escapeHtml(data.building_use || '')}" list="use-list" placeholder="マンション、工場など" />
             <datalist id="use-list">${BUILDING_USES.map(s => `<option value="${s}"></option>`).join('')}</datalist>
           </div>
+          <div><label class="form-label">地上階数</label><input type="number" min="0" step="1" name="above_ground_floors" class="form-input" value="${data.above_ground_floors ?? ''}" placeholder="例: 10" /></div>
+          <div><label class="form-label">地下階数</label><input type="number" min="0" step="1" name="basement_floors" class="form-input" value="${data.basement_floors ?? ''}" placeholder="例: 1" /></div>
+          <div><label class="form-label">延床面積 (㎡)</label><input type="number" min="0" step="0.01" name="total_floor_area" class="form-input" value="${data.total_floor_area ?? ''}" placeholder="例: 8500" /></div>
         </div>
       </fieldset>
 
@@ -1001,6 +1008,75 @@ async function renderEstimateForm(main, id) {
     renderEstimateItems();
   });
   renderEstimateItems();
+
+  // 類似案件検索・比較
+  document.getElementById('btn-similar-estimates')?.addEventListener('click', async () => {
+    const panel = document.getElementById('similar-estimates-panel');
+    panel.classList.remove('hidden');
+    panel.innerHTML = '<div class="bg-white border rounded-lg p-4 text-center text-gray-500"><i class="fas fa-spinner fa-spin"></i> 類似案件を検索中...</div>';
+    try {
+      const { data: similarData } = await API.get('/api/estimates/' + id + '/similar');
+      const candidates = similarData.candidates || [];
+      panel.innerHTML = `
+        <div class="bg-white border rounded-lg p-4">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <div>
+              <div class="font-bold text-blue-900"><i class="fas fa-code-compare"></i> 類似案件</div>
+              <div class="text-xs text-gray-500">構造・用途・階数・鉄筋数量・延床面積を基準に近い順で表示します。最大5件選択して明細比較できます。</div>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" id="btn-compare-selected">選択した案件と比較</button>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead><tr><th>選択</th><th>類似度</th><th>現場名</th><th>構造</th><th>用途</th><th>階数</th><th>数量(t)</th><th>延床(㎡)</th><th>NET単価</th></tr></thead>
+              <tbody>
+                ${candidates.map((c, i) => `<tr>
+                  <td><input type="checkbox" data-compare-id="${c.id}" ${i < 3 ? 'checked' : ''}></td>
+                  <td>${Number(c.similarity_score || 0).toFixed(0)}%</td>
+                  <td>${escapeHtml(c.site_name || '')}</td>
+                  <td>${escapeHtml(c.structure || '-')}</td>
+                  <td>${escapeHtml(c.building_use || '-')}</td>
+                  <td>${c.above_ground_floors ?? '-'}F / B${c.basement_floors ?? 0}</td>
+                  <td class="num-cell">${num(c.rebar_quantity)}</td>
+                  <td class="num-cell">${num0(c.total_floor_area)}</td>
+                  <td class="num-cell">${num(c.unit_price, 1)}円/kg</td>
+                </tr>`).join('') || '<tr><td colspan="9" class="text-center text-gray-400 py-4">比較できる過去案件がありません</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+          <div id="estimate-comparison-result" class="mt-4"></div>
+        </div>`;
+
+      document.getElementById('btn-compare-selected')?.addEventListener('click', async () => {
+        const ids = Array.from(panel.querySelectorAll('[data-compare-id]:checked')).map(el => el.dataset.compareId).slice(0, 5);
+        if (!ids.length) { alert('比較する案件を1件以上選択してください'); return; }
+        const resultEl = document.getElementById('estimate-comparison-result');
+        resultEl.innerHTML = '<div class="text-center text-gray-500"><i class="fas fa-spinner fa-spin"></i> 比較中...</div>';
+        const { data: comparison } = await API.get('/api/estimates/' + id + '/compare', { params: { ids: ids.join(',') } });
+        const projects = comparison.projects || [];
+        const rows = comparison.items || [];
+        resultEl.innerHTML = `
+          <div class="font-semibold mb-2">見積明細比較</div>
+          <div class="table-scroll">
+            <table class="data-table min-w-[1000px]">
+              <thead><tr><th>比較項目</th><th>指標</th>${projects.map(p => `<th>${escapeHtml(p.site_name || p.estimate_no)}</th>`).join('')}<th>過去平均</th><th>今回との差</th><th>差率</th></tr></thead>
+              <tbody>
+                ${rows.map(r => `<tr>
+                  <td>${escapeHtml(r.label)}</td>
+                  <td>${escapeHtml(r.metric_label)}</td>
+                  ${projects.map(p => `<td class="num-cell">${r.values[p.id] == null ? '-' : Number(r.values[p.id]).toLocaleString(undefined,{maximumFractionDigits:2})}</td>`).join('')}
+                  <td class="num-cell">${r.past_average == null ? '-' : Number(r.past_average).toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+                  <td class="num-cell">${r.difference == null ? '-' : Number(r.difference).toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+                  <td class="num-cell">${r.difference_rate == null ? '-' : Number(r.difference_rate).toFixed(1) + '%'}</td>
+                </tr>`).join('') || '<tr><td colspan="8" class="text-center text-gray-400 py-4">比較可能な共通明細がありません</td></tr>'}
+              </tbody>
+            </table>
+          </div>`;
+      });
+    } catch (err) {
+      panel.innerHTML = `<div class="bg-white border rounded-lg p-4 text-red-600">${escapeHtml(err.response?.data?.error || '類似案件の取得に失敗しました')}</div>`;
+    }
+  });
 
   // 自動計算: 単価 = NET金額 ÷ 数量 ÷ 1000
   const qEl = document.getElementById('f_quantity');
