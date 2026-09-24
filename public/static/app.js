@@ -287,6 +287,14 @@ function filterPanel() {
         <input type="number" class="form-input" data-filter="price_max" value="${f.price_max || ''}" />
       </div>
       <div>
+        <label class="form-label text-xs">元請け受注状況</label>
+        <select class="form-select" data-filter="client_ordered">
+          <option value="">全て</option>
+          <option value="1" ${String(f.client_ordered || '') === '1' ? 'selected' : ''}>受注済</option>
+          <option value="0" ${String(f.client_ordered || '') === '0' ? 'selected' : ''}>未受注</option>
+        </select>
+      </div>
+      <div>
         <label class="form-label text-xs">失注理由</label>
         <select class="form-select" data-filter="lost_reason">
           <option value="">全て</option>
@@ -750,6 +758,12 @@ async function renderEstimateForm(main, id) {
         <legend class="text-sm font-bold text-blue-900 border-b border-blue-900 pb-1 mb-3 w-full"><i class="fas fa-info-circle"></i> 基本情報</legend>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div><label class="form-label">見積日 *</label><input type="date" name="estimate_date" class="form-input" value="${data.estimate_date || ''}" required /></div>
+          <div class="flex items-center pt-6">
+            <label class="inline-flex items-center gap-2">
+              <input type="checkbox" name="client_ordered" value="1" ${data.client_ordered ? 'checked' : ''} />
+              <span class="text-sm">元請け受注済</span>
+            </label>
+          </div>
         </div>
       </fieldset>
 
@@ -873,6 +887,7 @@ async function renderEstimateForm(main, id) {
     const fd = new FormData(e.target);
     const body = Object.fromEntries(fd.entries());
     body.re_estimate = fd.get('re_estimate') ? 1 : 0;
+    body.client_ordered = fd.get('client_ordered') ? 1 : 0;
     try {
       if (isEdit) await API.put('/api/estimates/' + id, body);
       else await API.post('/api/estimates', body);
@@ -1148,9 +1163,9 @@ async function exportCSV(type) {
   let rows = [], headers = [], filename = '';
   if (type === 'estimates') {
     const { data } = await API.get('/api/estimates', { params: State.filters });
-    headers = ['見積番号','見積日','元請け','現場名','工事場所','構造','建物用途','数量(t)','見積金額','単価(円/kg)','材料区分','結果','失注理由','受注日','備考','競合','予想実行単価','利益見込み','工期','着工予定日','加工開始予定日','難易度','現場担当','再見積','元請担当者','連絡先'];
+    headers = ['見積番号','見積日','元請け受注済','元請け','現場名','工事場所','構造','建物用途','数量(t)','見積金額','単価(円/kg)','材料区分','結果','失注理由','受注日','備考','競合','予想実行単価','利益見込み','工期','着工予定日','加工開始予定日','難易度','現場担当','再見積','元請担当者','連絡先'];
     rows = data.estimates.map(e => [
-      e.estimate_no, e.estimate_date, e.client_name, e.site_name, e.site_location, e.structure, e.building_use,
+      e.estimate_no, e.estimate_date, e.client_ordered ? '受注済' : '未受注', e.client_name, e.site_name, e.site_location, e.structure, e.building_use,
       e.rebar_quantity, e.estimate_amount, e.unit_price, e.material_type, e.result, e.lost_reason,
       e.order_date, e.remarks, e.competitor, e.expected_actual_unit_price, e.profit_estimate, e.construction_period,
       e.construction_start_date, e.processing_start_date, e.difficulty, e.site_manager, e.re_estimate ? '有' : '', e.client_contact_name, e.client_contact_info
