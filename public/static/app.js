@@ -1164,7 +1164,10 @@ async function renderEstimateForm(main, id) {
       <fieldset>
         <legend class="text-sm font-bold text-blue-900 border-b border-blue-900 pb-1 mb-3 w-full flex items-center justify-between gap-2">
           <span><i class="fas fa-list-ul"></i> 見積明細</span>
-          <button type="button" class="btn btn-secondary btn-sm" id="btn-add-estimate-item"><i class="fas fa-plus"></i> 明細を追加</button>
+          <div class="flex gap-2">
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-add-item-code"><i class="fas fa-plus-circle"></i> 比較項目を追加</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-add-estimate-item"><i class="fas fa-plus"></i> 明細を追加</button>
+          </div>
         </legend>
         <p class="text-xs text-gray-500 mb-3">数量×単価で金額を自動計算します。梁架台費・諸経費などは金額欄へ直接入力できます。NET金額とは連動せず、NET金額は上の欄へ手入力してください。</p>
         <div class="table-scroll border rounded-lg">
@@ -1242,7 +1245,7 @@ async function renderEstimateForm(main, id) {
 
   // 見積明細
   const ITEM_CATEGORIES = ['鉄筋材料', '加工費', 'スペーサー費', '組立・運搬費', '圧接費', '架台費', '法定福利費', '諸経費', 'その他'];
-  const ITEM_CODES = [
+  let ITEM_CODES = [
     ['REBAR_D10','異形鉄筋 D10'], ['REBAR_D13','異形鉄筋 D13'], ['REBAR_D16','異形鉄筋 D16'],
     ['REBAR_D19','異形鉄筋 D19'], ['REBAR_D22','異形鉄筋 D22'], ['REBAR_D25','異形鉄筋 D25'],
     ['REBAR_D29','異形鉄筋 D29'], ['REBAR_D32','異形鉄筋 D32'], ['REBAR_D35','異形鉄筋 D35'],
@@ -1253,6 +1256,13 @@ async function renderEstimateForm(main, id) {
     ['GAS_DAILY','圧接常用費'], ['GAS_TEST','圧接試験費'], ['STAND','梁架台費'],
     ['WELFARE','法定福利費'], ['EXPENSE','諸経費'], ['OTHER','その他']
   ];
+  try {
+    const { data: codeData } = await API.get('/api/estimate-item-codes');
+    const customCodes = Array.isArray(codeData.items) ? codeData.items.map(v => [v.code, v.label]) : [];
+    ITEM_CODES = [...ITEM_CODES, ...customCodes.filter(([code]) => !ITEM_CODES.some(([baseCode]) => baseCode === code))];
+  } catch (err) {
+    console.warn('比較項目の追加データを取得できませんでした', err);
+  }
   let estimateItems = Array.isArray(data.items) ? data.items.map(item => ({ ...item })) : [];
 
   const itemCategoryOptions = (selected) =>
@@ -1329,6 +1339,20 @@ async function renderEstimateForm(main, id) {
       });
     });
   };
+
+  document.getElementById('btn-add-item-code')?.addEventListener('click', async () => {
+    const label = prompt('追加する比較項目名を入力してください。\n例：鉄筋運搬費、クレーン費、特殊加工費');
+    if (!label || !label.trim()) return;
+    try {
+      const { data: codeData } = await API.post('/api/estimate-item-codes', { label: label.trim() });
+      const item = codeData.item;
+      if (item && !ITEM_CODES.some(([code]) => code === item.code)) ITEM_CODES.push([item.code, item.label]);
+      renderEstimateItems();
+      alert(codeData.already_exists ? '同じ比較項目がすでに登録されています。' : '比較項目を追加しました。');
+    } catch (err) {
+      alert(err.response?.data?.error || '比較項目の追加に失敗しました');
+    }
+  });
 
   document.getElementById('btn-add-estimate-item')?.addEventListener('click', () => {
     estimateItems.push({
