@@ -166,7 +166,6 @@ function buildEstimateFilters(q: Record<string, string>) {
   if (q.building_use && q.building_use.trim()) { conditions.push('building_use LIKE ?'); params.push(`%${q.building_use.trim()}%`) }
   if (q.material_type) { conditions.push('material_type = ?'); params.push(q.material_type) }
   if (q.result) { conditions.push('result = ?'); params.push(q.result) }
-  if (q.estimator) { conditions.push('estimator = ?'); params.push(q.estimator) }
   if (q.lost_reason) { conditions.push('lost_reason = ?'); params.push(q.lost_reason) }
   if (q.search) {
     conditions.push('(estimate_no LIKE ? OR site_name LIKE ? OR client_name LIKE ? OR remarks LIKE ?)')
@@ -244,12 +243,14 @@ app.post('/api/estimates', authMiddleware, async (c) => {
   const lostReason = normalizeLostReason(resultValue, body.lost_reason)
   const estimateNo = (body.estimate_no && String(body.estimate_no).trim()) || generateEstimateNo()
 
+  // estimator カラムは画面から削除されたため INSERT の列リストから除外する
+  // (DB カラムと既存データは保持。新規レコードでは NULL のまま挿入される)
   const sql = `INSERT INTO estimates (
     estimate_no, estimate_date, client_name, site_name, site_location, structure, building_use,
-    rebar_quantity, estimate_amount, unit_price, material_type, estimator, result, lost_reason, order_date, remarks,
+    rebar_quantity, estimate_amount, unit_price, material_type, result, lost_reason, order_date, remarks,
     competitor, expected_actual_unit_price, profit_estimate, construction_period, construction_start_date,
     processing_start_date, difficulty, site_manager, re_estimate, client_contact_name, client_contact_info, created_by
-  ) VALUES (?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?,?, ?)`
+  ) VALUES (?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?,?, ?)`
 
   try {
     const result = await c.env.DB.prepare(sql).bind(
@@ -264,7 +265,6 @@ app.post('/api/estimates', authMiddleware, async (c) => {
       body.estimate_amount ? Number(body.estimate_amount) : null,
       body.unit_price ? Number(body.unit_price) : null,
       body.material_type || null,
-      body.estimator || null,
       resultValue,
       lostReason,
       body.order_date || null,
@@ -305,9 +305,11 @@ app.put('/api/estimates/:id', authMiddleware, async (c) => {
   const resultValue = normalizeResult(body.result)
   const lostReason = normalizeLostReason(resultValue, body.lost_reason)
 
+  // estimator は SET 対象から除外し、既存レコードの値を保持する
+  // (画面から入力欄が削除されたため送信されない。DB上の既存値は不変)
   const sql = `UPDATE estimates SET
     estimate_no=?, estimate_date=?, client_name=?, site_name=?, site_location=?, structure=?, building_use=?,
-    rebar_quantity=?, estimate_amount=?, unit_price=?, material_type=?, estimator=?, result=?, lost_reason=?, order_date=?, remarks=?,
+    rebar_quantity=?, estimate_amount=?, unit_price=?, material_type=?, result=?, lost_reason=?, order_date=?, remarks=?,
     competitor=?, expected_actual_unit_price=?, profit_estimate=?, construction_period=?, construction_start_date=?,
     processing_start_date=?, difficulty=?, site_manager=?, re_estimate=?, client_contact_name=?, client_contact_info=?,
     updated_at=CURRENT_TIMESTAMP
@@ -326,7 +328,6 @@ app.put('/api/estimates/:id', authMiddleware, async (c) => {
       body.estimate_amount ? Number(body.estimate_amount) : null,
       body.unit_price ? Number(body.unit_price) : null,
       body.material_type || null,
-      body.estimator || null,
       resultValue,
       lostReason,
       body.order_date || null,

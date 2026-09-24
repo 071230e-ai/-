@@ -279,10 +279,6 @@ function filterPanel() {
         </select>
       </div>
       <div>
-        <label class="form-label text-xs">見積担当者</label>
-        <input type="text" class="form-input" data-filter="estimator" value="${escapeHtml(f.estimator || '')}" />
-      </div>
-      <div>
         <label class="form-label text-xs">単価下限(円/kg)</label>
         <input type="number" class="form-input" data-filter="price_min" value="${f.price_min || ''}" />
       </div>
@@ -754,7 +750,6 @@ async function renderEstimateForm(main, id) {
         <legend class="text-sm font-bold text-blue-900 border-b border-blue-900 pb-1 mb-3 w-full"><i class="fas fa-info-circle"></i> 基本情報</legend>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div><label class="form-label">見積日 *</label><input type="date" name="estimate_date" class="form-input" value="${data.estimate_date || ''}" required /></div>
-          <div><label class="form-label">見積担当者</label><input type="text" name="estimator" class="form-input" value="${escapeHtml(data.estimator || '')}" /></div>
         </div>
       </fieldset>
 
@@ -1153,10 +1148,10 @@ async function exportCSV(type) {
   let rows = [], headers = [], filename = '';
   if (type === 'estimates') {
     const { data } = await API.get('/api/estimates', { params: State.filters });
-    headers = ['見積番号','見積日','元請け','現場名','工事場所','構造','建物用途','数量(t)','見積金額','単価(円/kg)','材料区分','担当者','結果','失注理由','受注日','備考','競合','予想実行単価','利益見込み','工期','着工予定日','加工開始予定日','難易度','現場担当','再見積','元請担当者','連絡先'];
+    headers = ['見積番号','見積日','元請け','現場名','工事場所','構造','建物用途','数量(t)','見積金額','単価(円/kg)','材料区分','結果','失注理由','受注日','備考','競合','予想実行単価','利益見込み','工期','着工予定日','加工開始予定日','難易度','現場担当','再見積','元請担当者','連絡先'];
     rows = data.estimates.map(e => [
       e.estimate_no, e.estimate_date, e.client_name, e.site_name, e.site_location, e.structure, e.building_use,
-      e.rebar_quantity, e.estimate_amount, e.unit_price, e.material_type, e.estimator, e.result, e.lost_reason,
+      e.rebar_quantity, e.estimate_amount, e.unit_price, e.material_type, e.result, e.lost_reason,
       e.order_date, e.remarks, e.competitor, e.expected_actual_unit_price, e.profit_estimate, e.construction_period,
       e.construction_start_date, e.processing_start_date, e.difficulty, e.site_manager, e.re_estimate ? '有' : '', e.client_contact_name, e.client_contact_info
     ]);

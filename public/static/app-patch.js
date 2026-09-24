@@ -58,10 +58,6 @@ filterPanel = function() {
         </select>
       </div>
       <div>
-        <label class="form-label text-xs">見積担当者</label>
-        <input type="text" class="form-input" data-filter="estimator" value="${escapeHtml(f.estimator || '')}" />
-      </div>
-      <div>
         <label class="form-label text-xs">単価下限(円/kg)</label>
         <input type="number" step="0.01" class="form-input" data-filter="price_min" value="${f.price_min || ''}" />
       </div>
