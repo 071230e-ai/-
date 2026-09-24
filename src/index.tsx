@@ -326,6 +326,68 @@ app.get('/api/similar-search', authMiddleware, async (c) => {
   return c.json({ candidates })
 })
 
+// 見積明細テンプレート
+app.get('/api/estimate-item-templates', authMiddleware, async (c) => {
+  const { results } = await c.env.DB.prepare(
+    'SELECT id, name, items_json, created_at, updated_at FROM estimate_item_templates ORDER BY name COLLATE NOCASE, id'
+  ).all<any>()
+  return c.json({ templates: (results || []).map((row: any) => {
+    let items: any[] = []
+    try { items = JSON.parse(String(row.items_json || '[]')) } catch {}
+    return { id: row.id, name: row.name, items, created_at: row.created_at, updated_at: row.updated_at }
+  }) })
+})
+
+app.post('/api/estimate-item-templates', authMiddleware, async (c) => {
+  let body: any
+  try { body = await c.req.json() } catch { return c.json({ error: 'リクエスト形式が不正です' }, 400) }
+  const name = String(body?.name || '').trim()
+  const items = normalizeEstimateItems(body?.items)
+  if (!name) return c.json({ error: 'テンプレート名を入力してください' }, 400)
+  if (name.length > 100) return c.json({ error: 'テンプレート名は100文字以内で入力してください' }, 400)
+  if (!items.length) return c.json({ error: '保存する見積明細がありません' }, 400)
+  try {
+    const result = await c.env.DB.prepare(
+      'INSERT INTO estimate_item_templates (name, items_json) VALUES (?, ?)'
+    ).bind(name, JSON.stringify(items)).run()
+    return c.json({ id: result.meta.last_row_id, name, items }, 201)
+  } catch (err: any) {
+    if (String(err?.message || '').includes('UNIQUE')) return c.json({ error: '同じ名前のテンプレートがすでにあります' }, 409)
+    throw err
+  }
+})
+
+app.delete('/api/estimate-item-templates/:id', authMiddleware, async (c) => {
+  const id = Number(c.req.param('id'))
+  if (!Number.isFinite(id)) return c.json({ error: 'テンプレートIDが不正です' }, 400)
+  const result = await c.env.DB.prepare('DELETE FROM estimate_item_templates WHERE id = ?').bind(id).run()
+  if (!result.meta.changes) return c.json({ error: 'テンプレートが見つかりません' }, 404)
+  return c.json({ success: true })
+})
+
+// 明細コピー用の過去見積一覧（明細がある案件のみ）
+app.get('/api/estimate-item-copy-sources', authMiddleware, async (c) => {
+  const search = String(c.req.query('search') || '').trim()
+  const params: any[] = []
+  let searchSql = ''
+  if (search) {
+    searchSql = 'AND (e.site_name LIKE ? OR e.client_name LIKE ? OR e.estimate_no LIKE ?)'
+    const q = `%${search}%`
+    params.push(q, q, q)
+  }
+  const { results } = await c.env.DB.prepare(`
+    SELECT e.id, e.estimate_date, e.estimate_no, e.client_name, e.site_name, e.structure,
+           e.building_use, e.rebar_quantity, e.net_amount, COUNT(i.id) AS item_count
+    FROM estimates e
+    JOIN estimate_items i ON i.estimate_id = e.id
+    WHERE 1=1 ${searchSql}
+    GROUP BY e.id
+    ORDER BY e.estimate_date DESC, e.id DESC
+    LIMIT 50
+  `).bind(...params).all<any>()
+  return c.json({ estimates: results || [] })
+})
+
 // 見積明細のユーザー追加比較項目
 app.get('/api/estimate-item-codes', authMiddleware, async (c) => {
   const { results } = await c.env.DB.prepare(
