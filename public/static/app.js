@@ -827,6 +827,7 @@ async function renderEstimateForm(main, id) {
           <table class="data-table min-w-[1200px]">
             <thead>
               <tr>
+                <th>比較項目</th>
                 <th>分類</th>
                 <th>摘要</th>
                 <th>規格</th>
@@ -897,16 +898,35 @@ async function renderEstimateForm(main, id) {
 
   // 見積明細
   const ITEM_CATEGORIES = ['鉄筋材料', '加工費', 'スペーサー費', '組立・運搬費', '圧接費', '架台費', '法定福利費', '諸経費', 'その他'];
+  const ITEM_CODES = [
+    ['REBAR_D10','異形鉄筋 D10'], ['REBAR_D13','異形鉄筋 D13'], ['REBAR_D16','異形鉄筋 D16'],
+    ['REBAR_D19','異形鉄筋 D19'], ['REBAR_D22','異形鉄筋 D22'], ['REBAR_D25','異形鉄筋 D25'],
+    ['REBAR_D29','異形鉄筋 D29'], ['REBAR_D32','異形鉄筋 D32'], ['REBAR_D35','異形鉄筋 D35'],
+    ['ANCHOR_REBAR','定着板鉄筋'], ['SPECIAL_REBAR','溶接閉鎖筋・特殊鉄筋'],
+    ['PROCESSING','加工費'], ['SPACER','スペーサー費'], ['ASSEMBLY_TRANSPORT','組立・運搬費'],
+    ['GAS_D19','ガス圧接 D19'], ['GAS_D22','ガス圧接 D22'], ['GAS_D25','ガス圧接 D25'],
+    ['GAS_D29','ガス圧接 D29'], ['GAS_D32','ガス圧接 D32'], ['GAS_D35','ガス圧接 D35'],
+    ['GAS_DAILY','圧接常用費'], ['GAS_TEST','圧接試験費'], ['STAND','梁架台費'],
+    ['WELFARE','法定福利費'], ['EXPENSE','諸経費'], ['OTHER','その他']
+  ];
   let estimateItems = Array.isArray(data.items) ? data.items.map(item => ({ ...item })) : [];
 
   const itemCategoryOptions = (selected) =>
     ITEM_CATEGORIES.map(v => `<option value="${v}" ${selected === v ? 'selected' : ''}>${v}</option>`).join('');
+  const itemCodeOptions = (selected) =>
+    ITEM_CODES.map(([code, label]) => `<option value="${code}" ${selected === code ? 'selected' : ''}>${label}</option>`).join('');
 
   const renderEstimateItems = () => {
     const tbody = document.getElementById('estimate-items-body');
     if (!tbody) return;
     tbody.innerHTML = estimateItems.map((item, index) => `
       <tr data-item-index="${index}">
+        <td>
+          <select class="form-select text-sm" data-item-field="item_code">
+            <option value="">選択</option>
+            ${itemCodeOptions(item.item_code || '')}
+          </select>
+        </td>
         <td>
           <select class="form-select text-sm" data-item-field="category">
             <option value="">選択</option>
@@ -922,7 +942,7 @@ async function renderEstimateForm(main, id) {
         <td><input type="text" class="form-input text-sm" data-item-field="remarks" value="${escapeHtml(item.remarks || '')}" placeholder="例: 支給材" /></td>
         <td><button type="button" class="btn btn-danger btn-sm" data-remove-item="${index}"><i class="fas fa-trash"></i></button></td>
       </tr>
-    `).join('') || '<tr><td colspan="9" class="text-center text-gray-400 py-4">明細はまだありません。「明細を追加」から入力してください。</td></tr>';
+    `).join('') || '<tr><td colspan="10" class="text-center text-gray-400 py-4">明細はまだありません。「明細を追加」から入力してください。</td></tr>';
 
     const total = estimateItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
     const totalEl = document.getElementById('estimate-items-total');
@@ -968,6 +988,7 @@ async function renderEstimateForm(main, id) {
 
   document.getElementById('btn-add-estimate-item')?.addEventListener('click', () => {
     estimateItems.push({
+      item_code: '',
       category: '',
       description: '',
       specification: '',
@@ -1014,6 +1035,7 @@ async function renderEstimateForm(main, id) {
     body.client_ordered = Number(fd.get('client_ordered') || 0);
     body.items = estimateItems
       .map((item, index) => ({
+        item_code: String(item.item_code || '').trim(),
         category: String(item.category || '').trim(),
         description: String(item.description || '').trim(),
         specification: String(item.specification || '').trim(),
@@ -1024,7 +1046,7 @@ async function renderEstimateForm(main, id) {
         remarks: String(item.remarks || '').trim(),
         sort_order: index,
       }))
-      .filter(item => item.category || item.description || item.specification || item.quantity != null || item.unit_price != null || item.amount != null || item.remarks);
+      .filter(item => item.item_code || item.category || item.description || item.specification || item.quantity != null || item.unit_price != null || item.amount != null || item.remarks);
     try {
       if (isEdit) await API.put('/api/estimates/' + id, body);
       else await API.post('/api/estimates', body);
