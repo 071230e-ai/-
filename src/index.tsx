@@ -87,6 +87,50 @@ function calculateUnitPrice(quantityValue: any, netAmountValue: any): number | n
   return netAmount / quantity / 1000
 }
 
+function normalizeEstimateItems(value: any): any[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((item: any, index: number) => ({
+      category: String(item?.category || '').trim() || null,
+      description: String(item?.description || '').trim() || null,
+      specification: String(item?.specification || '').trim() || null,
+      quantity: item?.quantity === null || item?.quantity === '' || item?.quantity === undefined ? null : Number(item.quantity),
+      unit: String(item?.unit || '').trim() || null,
+      unit_price: item?.unit_price === null || item?.unit_price === '' || item?.unit_price === undefined ? null : Number(item.unit_price),
+      amount: item?.amount === null || item?.amount === '' || item?.amount === undefined ? null : Number(item.amount),
+      remarks: String(item?.remarks || '').trim() || null,
+      sort_order: Number.isFinite(Number(item?.sort_order)) ? Number(item.sort_order) : index,
+    }))
+    .filter((item: any) =>
+      item.category || item.description || item.specification || item.quantity !== null ||
+      item.unit_price !== null || item.amount !== null || item.remarks
+    )
+}
+
+async function replaceEstimateItems(db: D1Database, estimateId: number | string, items: any[]) {
+  const statements = [
+    db.prepare('DELETE FROM estimate_items WHERE estimate_id = ?').bind(estimateId),
+    ...items.map((item) =>
+      db.prepare(`INSERT INTO estimate_items
+        (estimate_id, category, description, specification, quantity, unit, unit_price, amount, remarks, sort_order)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`)
+        .bind(
+          estimateId,
+          item.category,
+          item.description,
+          item.specification,
+          item.quantity,
+          item.unit,
+          item.unit_price,
+          item.amount,
+          item.remarks,
+          item.sort_order
+        )
+    ),
+  ]
+  await db.batch(statements)
+}
+
 // 認証ミドルウェア
 async function authMiddleware(c: any, next: any) {
   const secret = getSessionSecret(c)
@@ -232,7 +276,10 @@ app.get('/api/estimates/:id', authMiddleware, async (c) => {
   const id = c.req.param('id')
   const row = await c.env.DB.prepare('SELECT * FROM estimates WHERE id = ?').bind(id).first()
   if (!row) return c.json({ error: '見積データが見つかりません' }, 404)
-  return c.json({ estimate: row })
+  const { results: items } = await c.env.DB.prepare(
+    'SELECT * FROM estimate_items WHERE estimate_id = ? ORDER BY sort_order, id'
+  ).bind(id).all()
+  return c.json({ estimate: row, items: items || [] })
 })
 
 function generateEstimateNo(): string {
@@ -254,6 +301,7 @@ app.post('/api/estimates', authMiddleware, async (c) => {
   const lostReason = normalizeLostReason(resultValue, body.lost_reason)
   const estimateNo = (body.estimate_no && String(body.estimate_no).trim()) || generateEstimateNo()
   const unitPrice = calculateUnitPrice(body.rebar_quantity, body.net_amount)
+  const items = normalizeEstimateItems(body.items)
 
   // estimator カラムは画面から削除されたため INSERT の列リストから除外する
   // (DB カラムと既存データは保持。新規レコードでは NULL のまま挿入される)
@@ -297,7 +345,9 @@ app.post('/api/estimates', authMiddleware, async (c) => {
       user.id
     ).run()
 
-    return c.json({ id: result.meta.last_row_id, success: true })
+    const estimateId = Number(result.meta.last_row_id)
+    if (items.length) await replaceEstimateItems(c.env.DB, estimateId, items)
+    return c.json({ id: estimateId, success: true })
   } catch (err: any) {
     if (String(err?.message || err).includes('UNIQUE constraint failed: estimates.estimate_no')) {
       return c.json({ error: '見積番号が重複しました。もう一度登録してください' }, 409)
@@ -319,6 +369,7 @@ app.put('/api/estimates/:id', authMiddleware, async (c) => {
   const resultValue = normalizeResult(body.result)
   const lostReason = normalizeLostReason(resultValue, body.lost_reason)
   const unitPrice = calculateUnitPrice(body.rebar_quantity, body.net_amount)
+  const items = normalizeEstimateItems(body.items)
 
   // estimator は SET 対象から除外し、既存レコードの値を保持する
   // (画面から入力欄が削除されたため送信されない。DB上の既存値は不変)
@@ -362,6 +413,7 @@ app.put('/api/estimates/:id', authMiddleware, async (c) => {
       body.client_contact_info || null,
       id
     ).run()
+    await replaceEstimateItems(c.env.DB, id, items)
     return c.json({ success: true })
   } catch (err: any) {
     if (String(err?.message || err).includes('UNIQUE constraint failed: estimates.estimate_no')) {
@@ -373,6 +425,7 @@ app.put('/api/estimates/:id', authMiddleware, async (c) => {
 
 app.delete('/api/estimates/:id', authMiddleware, adminMiddleware, async (c) => {
   const id = c.req.param('id')
+  await c.env.DB.prepare('DELETE FROM estimate_items WHERE estimate_id = ?').bind(id).run()
   const result = await c.env.DB.prepare('DELETE FROM estimates WHERE id = ?').bind(id).run()
   if (!result.meta.changes) return c.json({ error: '見積データが見つかりません' }, 404)
   return c.json({ success: true })
